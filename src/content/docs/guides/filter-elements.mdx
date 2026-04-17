@@ -1,0 +1,82 @@
+---
+title: การดึงข้อมูลโมเดล (Core API)
+description: เรียนรู้วิธีใช้ FilteredElementCollector เพื่อค้นหาเสา คาน และเหล็กเสริมในโมเดล Revit
+---
+
+การสื่อสารกับโมเดล Revit เริ่มต้นที่การ "ค้นหา" สิ่งที่เราต้องการ ใน Revit API เราใช้คลาสที่ชื่อว่า **`FilteredElementCollector`** ในการดึงข้อมูลออกมาครับ
+
+ในบทนี้เราจะมาเขียนโค้ดเพื่อค้นหา **เสาโครงสร้าง (Structural Columns)** แจ้งจำนวนให้ผู้ใช้ทราบ
+
+## `FilteredElementCollector` คืออะไร?
+เปรียบเสมือนคำสั่ง SQL `SELECT * FROM ... WHERE ...` สำหรับ Revit หน้าที่ของมันคือการกรองเอาเฉพาะ Element ที่เราสนใจออกมาจากฐานข้อมูลของโมเดลทั้งหมดที่กำลังเปิดอยู่
+
+## 1. การค้นหาเสาโครงสร้าง (Structural Columns)
+
+เราจะแก้ไขไฟล์ `Command.cs` เดิม ให้เปลี่ยนจากการโชว์ข้อความเฉยๆ มาเป็นการนับจำนวนเสาแทน
+
+```csharp
+using System.Linq; // ต้อง using System.Linq ด้วย
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class Command : IExternalCommand
+{
+    public Result Execute(
+        ExternalCommandData commandData,
+        ref string message,
+        ElementSet elements)
+    {
+        // 1. เข้าถึง Document ปัจจุบันที่เปิดอยู่
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 2. สร้างตัวกรอง (Collector)
+        FilteredElementCollector collector = new FilteredElementCollector(doc);
+
+        // 3. กรองเอาเฉพาะหมวดหมู่ "เสาโครงสร้าง" (OST_StructuralColumns) 
+        // สังเกตว่าเราใช้ WhereElementIsNotElementType() เพื่อไม่เอาประเภท (Family Type) มานับรวม
+        var columns = collector
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        // 4. แสดงผลจำนวนที่พบ
+        TaskDialog.Show("RevitToolkit", $"พบเสาโครงสร้างทั้งหมด {columns.Count} ต้นในโมเดลนี้");
+
+        return Result.Succeeded;
+    }
+}
+```
+
+## 2. ตัวอย่างการกรองแบบอื่นๆ สำหรับงานโครงสร้าง
+
+การกรองหา **คาน (Structural Framing)**:
+```csharp
+var beams = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_StructuralFraming)
+    .WhereElementIsNotElementType()
+    .ToElements();
+```
+
+การกรองหา **เหล็กเสริม (Rebar)** ทั่วทั้งโปรเจ็กต์:
+```csharp
+var rebars = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_Rebar)
+    .WhereElementIsNotElementType()
+    .ToElements();
+```
+
+การดึงเฉพาะของที่ถูก **Select** ไว้บนหน้าจอ:
+```csharp
+UIDocument uidoc = commandData.Application.ActiveUIDocument;
+ICollection<ElementId> selectedIds = uidoc.Selection.GetElementIds();
+```
+
+:::tip
+การดึงข้อมูลด้วย `FilteredElementCollector` เป็นแค่การประสานงานเพื่อ "อ่าน" (Read Only) เท่านั้น ดังนั้นเราถึงไม่ต้องเปิด `Transaction` ขึ้นมาครอบการทำงานแต่อย่างใด
+:::
+
+ในบทต่อไป เราจะมาดูวิธีการ "แก้ไข/สร้าง" (Write) ข้อมูลกลับเข้าไปในโมเดลผ่านระบบ Transaction กันครับ!

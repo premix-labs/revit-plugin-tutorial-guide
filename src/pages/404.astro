@@ -1,0 +1,79 @@
+---
+export const prerender = true;
+---
+
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>404 | Revit 2026 Plugin Guide</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3efe6;
+        --card: #fffdf8;
+        --text: #1f2a2e;
+        --muted: #5b6a6f;
+        --accent: #0e6b6f;
+        --border: #d5cdc0;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, 'Times New Roman', serif;
+        background:
+          radial-gradient(circle at top, rgba(14, 107, 111, 0.12), transparent 35%),
+          linear-gradient(180deg, #f8f5ee, var(--bg));
+        color: var(--text);
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      section {
+        width: min(640px, 100%);
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 32px;
+        box-shadow: 0 18px 40px rgba(41, 42, 43, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 5vw, 3rem);
+      }
+
+      p {
+        margin: 0 0 16px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      a {
+        display: inline-block;
+        padding: 12px 18px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: white;
+        text-decoration: none;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>404</h1>
+        <p>ไม่พบหน้าที่คุณเปิดอยู่ในคู่มือ Revit 2026 Plugin</p>
+        <p>กลับไปเริ่มที่หน้า Quick Start หรือหน้าหลักของเอกสารเพื่ออ่านต่อจาก workflow หลัก</p>
+        <a href="/">กลับไปหน้าเอกสาร</a>
+      </section>
+    </main>
+  </body>
+</html>

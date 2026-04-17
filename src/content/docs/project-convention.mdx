@@ -1,0 +1,33 @@
+---
+title: Project Convention
+description: สรุป naming และโครงสร้างที่ใช้ใน repo นี้เพื่อให้ทีมทำงานไปในทางเดียวกัน
+---
+
+## Naming
+
+- โปรเจ็กต์: `RevitToolkit`
+- namespace หลัก: `RevitToolkit`
+- command แรก: `Command`
+- manifest: `RevitToolkit.addin`
+
+## โครงสร้างที่ใช้
+
+```text
+RevitToolkit/
+  Command.cs
+  RevitToolkit.csproj
+  RevitToolkit.addin
+  Properties/
+    launchSettings.json
+deploy/
+  Revit/
+    2026/
+      RevitToolkit/
+        RevitToolkit.dll
+```
+
+## เหตุผลที่ใช้ deploy folder แยกจาก `bin`
+
+- `bin\Debug` และ `bin\Release` เปลี่ยนตาม configuration
+- `.addin` ต้องชี้ไป path ที่นิ่งและอยู่ได้ยาว
+- ถ้าใช้ deploy folder คงที่ จะไม่ต้องไล่แก้ `<Assembly>` บ่อย

@@ -1,0 +1,38 @@
+---
+title: Checklist
+description: เช็กลิสต์สั้น ๆ สำหรับยืนยันว่าโปรเจ็กต์ Revit 2026 plugin พร้อมใช้งานแล้ว
+---
+
+## Setup
+
+- ติดตั้ง `Visual Studio 2022`
+- ติดตั้ง `.NET 8 SDK`
+- ติดตั้ง `Revit 2026`
+
+## Project
+
+- โปรเจ็กต์เป็น `Class Library`
+- `TargetFramework` เป็น `net8.0-windows`
+- `PlatformTarget` เป็น `x64`
+- reference `RevitAPI.dll` และ `RevitAPIUI.dll`
+
+## Add-in
+
+- มี `App.cs` แบบ `IExternalApplication` ถ้าโปรเจ็กต์สร้าง Ribbon เอง
+- มี `Command.cs` แบบ `IExternalCommand`
+- มี `RevitToolkit.addin`
+- `AddInId` ไม่ซ้ำ
+- `FullClassName` ตรงกับ class จริง
+
+## Deploy
+
+- `.addin` ถูก copy ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+- DLL ถูก copy ไป deploy folder คงที่
+- `<Assembly>` ใน `.addin` ชี้ไป DLL จริง
+
+## Test
+
+- เปิด Revit แล้วเห็นแท็บ `RevitToolkit` บน Ribbon
+- กดปุ่ม `Hello Revit` ใน panel `General`
+- กดแล้วขึ้น `Hello from Revit 2026`
+- กด `F5` แล้ว breakpoint ใน `Execute(...)` เข้าได้

@@ -1,0 +1,92 @@
+---
+title: การแก้ไขโมเดล (Transaction)
+description: เรียนรู้วิธีเปิด Transaction เพื่อเขียนข้อมูลและอัปเดตโมเดล Revit
+---
+
+การกระทำใดๆ ก็ตามที่ส่งผลให้ฐานข้อมูลของ Revit เปลี่ยนแปลง (เช่น สร้างผนัง, ขยับเสา, เปลี่ยนค่าพารามิเตอร์) **จำเป็นต้องทำภายใต้ระบบ Transaction เสมอ** ถ้าไม่ทำ Revit จะเด้ง Error โค้ดพังทันที!
+
+## กฎ 3 ข้อของ Transaction
+1. **ชื่อเดียวใจเดียว**: 1 Transaction ต้องระบุชื่อเสมอรอบรับการทำ Undo ของผู้ใช้
+2. **Start & Commit**: ต้องเริ่มเปิดตัวด้วย `.Start()` และปิดจบงานด้วย `.Commit()`
+3. **TransactionMode.Manual**: ด้านบนสุดของคลาส `Command` ต้องกำกับไว้เป็น `Manual` (อย่างที่เราทำมาตลอด)
+
+## ตัวอย่าง: การเขียนค่า Parameter อัตโนมัติลงในคาน (Beam)
+
+สมมติว่าเราต้องการเขียนเครื่องหมาย (Mark) เรียงเบอร์ให้กับ "คาน" ทั้งหมดในโมเดล เช่น `B-1`, `B-2`, `B-3`
+
+ไปแก้ไขโค้ดใน `Command.cs` ใหม่อีกครั้ง:
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class Command : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ดึงคานทั้งหมดมาก่อน
+        var beams = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralFraming)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        if (beams.Count == 0)
+        {
+            TaskDialog.Show("RevitToolkit", "ไม่พบคานในโมเดล");
+            return Result.Succeeded;
+        }
+
+        // 2. ใช้โครงสร้าง using สร้าง Transaction ใหม่ขึ้นมา
+        using (Transaction trans = new Transaction(doc, "Auto Number Beams"))
+        {
+            try
+            {
+                // 3. เริ่มเปิดงาน
+                trans.Start();
+
+                int counter = 1;
+                foreach (Element beam in beams)
+                {
+                    // 4. เข้าถึงพารามิเตอร์ "Mark" (หมายเลข)
+                    Parameter markParam = beam.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+                    
+                    if (markParam != null && !markParam.IsReadOnly)
+                    {
+                        // 5. เขียนค่ากลับเข้าไปในพารามิเตอร์
+                        markParam.Set($"B-{counter}");
+                        counter++;
+                    }
+                }
+
+                // 6. กดเซฟยืนยันคำสั่ง
+                trans.Commit();
+
+                TaskDialog.Show("RevitToolkit", $"อัปเดตหมายเลขคานสำเร็จ {counter - 1} ตัว");
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                // 7. หากมีอะไรผิดพลาด โค้ดจะตกมาหน้านี้ และสั่งลบล้าง (Rollback) สิ่งที่ทำค้างไว้
+                trans.RollBack();
+                message = ex.Message;
+                return Result.Failed;
+            }
+        }
+    }
+}
+```
+
+:::warning
+ข้อผิดพลาดที่เจอบ่อยที่สุดสำหรับมือใหม่คือ **ลืมใส่ `trans.Commit()`** ซึ่งจะทำให้โค้ดรันจนจบแบบนิ่งๆ ไม่ error แต่ดันไม่มีอะไรเปลี่ยนแปลงในโมเดลเลย!
+:::
+
+พอเข้าใจเรื่องของ `FilteredElementCollector` การดึงข้อมูล และการจัดการด้วย `Transaction` แล้ว คุณก็พร้อมลุยกับงานอัตโนมัติต่างๆ เต็มตัวได้แล้วครับ

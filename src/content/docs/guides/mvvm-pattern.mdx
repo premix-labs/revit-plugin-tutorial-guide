@@ -1,0 +1,86 @@
+---
+title: แยกส่วนโค้ดด้วย MVVM & IExternalEventHandler
+description: คัมภีร์วิชาชั้นสูง การแยกหน้าจอ ลอจิกข้อมูล และ Revit API ออกจากกัน
+---
+
+ปัญหาคลาสสิคของคนที่เพิ่งเริ่มทำ UI ด้วย WPF หรือ WinForms คือการนำ โค้ดของ Revit API, โค้ดของฐานข้อมูล, และโค้ดของหน้าต่าง ไปกองรวมกันในไฟล์เดียว (`MainWindow.xaml.cs`) 
+
+เมื่อโปรเจ็กต์ใหญ่ขึ้น โค้ดจะอ่านยากมาก (เรียกกันว่า Spaghetti Code) ทางแก้คือ Design Pattern ที่ชื่อว่า **MVVM (Model-View-ViewModel)** ครับ
+
+## 1. MVVM คืออะไร ย่อมาจากอะไร?
+*   **M (Model)**: ตัวแทนข้อมูล/ฐานข้อมูล 
+*   **V (View)**: ไฟล์หน้าจอ (`MainWindow.xaml`) หน้าที่ของมันคือสวยงามอย่างเดียว ไม่มี Logic ข้างใน
+*   **VM (ViewModel)**: ผู้จัดการตัวกลางที่เอา Model มาประมวลผล แล้วส่งข้อมูลต่อไปโชว์ให้ View เห็น
+
+ใน WPF เราจะใช้ระบบ **Data Binding** เพื่อผูกค่าระหว่างช่อง TextBox ใน View เข้ากับคุณสมบัติ (Property) ที่เราสร้างไว้ใน ViewModel ทันทีที่ผู้ใช้พิมพ์ ข้อมูลในตัวแปร ViewModel จะเปลี่ยนออโต้! ไม่ต้องโยงชื่อ `txtPrefix.Text = ...` อีกต่อไป
+
+## 2. ความท้าทายระดับยาก: Context ของ Revit
+Revit มีกฎศักดิ์สิทธิ์อยู่ข้อนึงคือ **API ทุกอย่างจะต้องถูกทำงานใน Main Thread ของ Revit เท่านั้น** ถ้าคุณสร้างหน้าต่างลอย (Modeless Window) แล้วคุณมีปุ่มที่ผูกกับ ViewModel แล้วปุ่มนั้นคลิกเพื่อสั่งสร้างคาน Revit จะแครชทันที เพราะจังหวะที่กดปุ่ม Thread นั้นมันหลุดออกไปจาก Thread หลักของโปรแกรม!
+
+เพื่อรับมือกับปัญหาที่ว่านี้ เราเลยต้องใช้สิ่งที่เรียกว่า `IExternalEventHandler`
+
+## 3. ตัวรับสาร (IExternalEventHandler)
+เพื่อให้ UI ของคุณ "สั่งงาน" Revit ได้อย่างปลอดภัย คุณต้องทำเครื่อง "ฝากข้อความ"
+
+```csharp
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+// 1. คนรับหน้าที่ถือ Event
+public class RevitEventHandler : IExternalEventHandler
+{
+    // ตัวแปรข้อมูลที่ ViewModel จะส่งมาฝากไว้
+    public string UserPrefix { get; set; }
+
+    // ฟังก์ชันนี้แหละ ที่มั่นใจได้ 100% ว่าจะรันบน Main Thread
+    public void Execute(UIApplication app)
+    {
+        // ...เอา UserPrefix เข้าไปรัน FilteredElementCollector 
+        // ...เปิด Transaction("Rename Beams")
+        TaskDialog.Show("Revit", $"กำลังทำงานใน Revit API อย่างปลอดภัย ด้วย Prefix: {UserPrefix}");
+    }
+
+    public string GetName() => "RevitEventHandler";
+}
+```
+
+## 4. ViewModel (ผู้จัดการ)
+เมื่อผู้ใช้กดปุ่มบนหน้าจอโค้ดจะวิ่งมาที่ผู้จัดการ แล้วผู้จัดการจะ "เคาะประตูเรียก" Event Handler อีกที
+
+```csharp
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+public class MainViewModel
+{
+    // ตัวแปรที่ผูกกับช่องกรอกของ XAML 
+    public string InputPrefix { get; set; } = "C-";
+
+    // พระเอก 2 ตัว
+    private readonly RevitEventHandler _handler;
+    private readonly ExternalEvent _exEvent;
+
+    public MainViewModel()
+    {
+        _handler = new RevitEventHandler();
+        _exEvent = ExternalEvent.Create(_handler); // ลงทะเบียนช่องทางพิเศษกับ Revit
+    }
+
+    // สมมติว่ามี Binding Command จากปุ่มมาโผล่ตรงนี้
+    public void ExecuteRunButton()
+    {
+        // 1. ฝากข้อมูลเข้าไป
+        _handler.UserPrefix = InputPrefix;
+
+        // 2. เคาะประตูกดกริ่งให้ Revit รู้ว่า "เห้ย มีงานมาให้ทำนะ!" 
+        // แล้ว Revit จะหาจังหวะที่ตัวเองว่าง หันมาหยิบฟังก์ชัน Execute() ของ _handler ไปรันเอง
+        _exEvent.Raise(); 
+    }
+}
+```
+
+:::note[คุณกำลังดูระบบแบบมืออาชีพอยู่]
+ถึงแม้ว่า `IExternalEventHandler` จะดูยุ่งยากที่ต้องมีการโยนข้อมูลกันไปกันมา แต่ **นี่คือมาตรฐานของคนทั้งวงการปลั๊กอินระดับโลก** ครับ ทุกปลั๊กอินใหญ่ๆ ที่หน้าต่างมันสามารถลอยข้างจอ (Modeless) และกดแก้ไขโมเดลในขณะเปิดหน้าต่างทิ้งไว้ได้ ต่างก็ใช้ `IExternalEventHandler` รับจบให้ทั้งสิ้น!
+:::

@@ -1,0 +1,41 @@
+---
+title: ลงทะเบียน .addin
+description: ทำให้ Revit รู้จัก plugin ของคุณด้วย manifest file
+---
+
+Revit จะไม่โหลด DLL ของคุณจนกว่าจะมีไฟล์ `.addin`
+
+ตัวอย่าง:
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <!-- ใช้ Application หากต้องการวาด Ribbon หรือ UI -->
+  <AddIn Type="Application">
+    <Name>RevitToolkit</Name>
+    <Assembly>RevitToolkit\RevitToolkit.dll</Assembly>
+    <AddInId>E8AD8FD2-04D9-4A3A-A8B6-C93CB6C7C489</AddInId>
+    <FullClassName>RevitToolkit.App</FullClassName>
+    <VendorId>PREMIX</VendorId>
+    <VendorDescription>Premix Company</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+```
+
+## ตำแหน่งที่ Revit อ่าน
+
+```text
+C:\ProgramData\Autodesk\Revit\Addins\2026\
+```
+
+## ความหมายของ field หลัก
+
+- `Type="Application"` ใช้เวลาต้องการวาด Ribbon ตอนเริ่มโปรแกรม (ถ้าใช้แค่ปุ่มเพียวๆ ให้ใช้ `Command`)
+- `Assembly` คือ path ไป DLL (ควรตั้งเป็น Relative Path ตามบท Deployment)
+- `AddInId` ต้องไม่ซ้ำกับ plugin อื่น
+- `FullClassName` ต้องตรงกับ namespace และ class `App` ของคุณ
+
+:::caution
+อย่าใช้ GUID ตัวอย่างจากอินเทอร์เน็ตตรง ๆ เพราะมีโอกาสชนกับ add-in อื่นในเครื่อง
+:::
+

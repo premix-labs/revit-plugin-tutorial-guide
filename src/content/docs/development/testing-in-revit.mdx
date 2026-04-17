@@ -1,0 +1,33 @@
+---
+title: ทดสอบใน Revit
+description: วิธีเช็กว่า Revit โหลด plugin ได้จริงและวิธีแปลความหมาย warning ที่เจอบ่อย
+---
+
+## ทดสอบรอบแรก
+
+1. Build โปรเจ็กต์
+2. เปิด Revit 2026
+3. ถ้าโปรเจ็กต์ใช้ ribbon แบบปัจจุบัน ให้ไปที่ `RevitToolkit > General`
+4. คลิกปุ่ม `Hello Revit`
+
+ถ้าทุกอย่างถูก คุณควรเห็น dialog:
+
+```text
+Hello from Revit 2026
+```
+
+## ถ้าเจอ warning เรื่อง unsigned add-in
+
+หน้าต่างนี้หมายความว่า plugin ยังไม่ได้ sign certificate ไม่ได้แปลว่าโค้ดเสีย
+
+สำหรับการพัฒนาในเครื่องตัวเอง:
+
+- กด `Always Load` ถ้าจะใช้ต่อ
+- กด `Load Once` ถ้าต้องการทดสอบเฉพาะรอบนี้
+
+## สิ่งที่ผลลัพธ์นี้ยืนยัน
+
+- Revit โหลด `.addin` ได้
+- หา entry point ที่กำหนดใน `.addin` เจอ
+- เรียก `Execute(...)` สำเร็จ
+- DLL ใน deploy folder ถูกใช้จริง

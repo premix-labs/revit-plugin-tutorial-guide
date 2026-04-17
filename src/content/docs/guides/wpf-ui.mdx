@@ -1,0 +1,103 @@
+---
+title: การทำหน้าต่าง UI แบบมืออาชีพ (WPF)
+description: ยกระดับปลั๊กอินของคุณด้วย Windows Presentation Foundation (WPF) ลืม WinForms แบบเก่าไปได้เลย
+---
+
+`TaskDialog.Show()` เป็นคำสั่งที่ดีในการเช็กผลลัพธ์ไวๆ แต่เมื่อผู้ใช้ต้องการหน้าต่างให้กรอกข้อมูล, เลือก Dropdown, หรือติ๊ก Checkbox เราจะต้องการ **User Interface (UI)** ที่แท้จริง
+
+ในโลกการพัฒนา .NET ยุคใหม่สำหรับการทำ Desktop App เราจะใช้เทคโนโลยีที่เรียกว่า **WPF (Windows Presentation Foundation)** ครับ 
+
+## WPF คืออะไร?
+WPF ใช้ไฟล์ `.xaml` สำหรับออกแบบหน้าตา (คล้ายกับการเขียน HTML บนหน้าเว็บ) และมีไฟล์ `Views.xaml.cs` (Code-Behind) เป็นตัวควบคุมเหตุการณ์ต่างๆ
+
+## 1. เตรียมโปรเจ็กต์ให้รองรับ WPF
+
+โดยปกติ Class Library ของ .NET จะไม่รู้จัก WPF เราต้องย้อนกลับไปทำโปรเจ็กต์ของเราก่อน 
+
+เปิดโฟลเดอร์โปรเจ็กต์ เปิดไฟล์ `RevitToolkit.csproj` 
+
+ให้เพิ่มคู่แท็ก `<UseWPF>true</UseWPF>` เข้าไปใน `PropertyGroup`:
+```xml
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    
+    <!-- เติมบรรทัดนี้ลงไปเพื่อเปิดใช้งาน WPF -->
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+```
+
+## 2. เริ่มสร้างไฟล์ WPF (XAML)
+
+ให้คุณสร้างไฟล์ชื่อ `MainWindow.xaml` ขึ้นมาในโปรเจ็กต์
+```xml
+<!-- MainWindow.xaml -->
+<Window x:Class="RevitToolkit.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ระบบรีเนียมเสาอัตโนมัติ" Height="250" Width="400"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="20">
+        <StackPanel>
+            <TextBlock Text="กรอกคำนำหน้าย่อให้เสา (Prefix):" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBox Name="txtPrefix" Height="30" FontSize="16" Text="C-"/>
+            
+            <Button Name="btnRun" Content="เริ่มทำงาน" Height="40" Margin="0,20,0,0"
+                    Background="#007ACC" Foreground="White" FontSize="16" 
+                    Click="BtnRun_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
+```
+
+## 3. ผูกคำสั่งใน Code-Behind
+ไฟล์ `MainWindow.xaml.cs` จะมีหน้าตาประมาณนี้ เพื่อดักจับตอนที่ผู้ใช้กดปุ่ม `btnRun`
+
+```csharp
+using System.Windows;
+
+namespace RevitToolkit;
+
+public partial class MainWindow : Window
+{
+    public MainWindow()
+    {
+        InitializeComponent();
+    }
+
+    private void BtnRun_Click(object sender, RoutedEventArgs e)
+    {
+        string userPrefix = txtPrefix.Text;
+
+        // โค้ดสำหรับติดต่อ Revit จะมาอยู่ตรงนี้
+        MessageBox.Show($"พร้อมรันเสาด้วยรหัสเริ่มต้น: {userPrefix}");
+        
+        // ปิดหน้าต่างให้เรียบร้อย
+        this.Close();
+    }
+}
+```
+
+## 4. เรียกหน้าจอจากการกดปุ่มใน Ribbon
+กลับมาที่ไฟล์ `Command.cs` หรือจะเป็นปุ่ม Command ปุ่มใหม่ก็ได้ จุดที่เราเคยรันคำสั่งทำงาน ให้เปลี่ยนมาเป็นการเอาหน้าจอโชว์ขึ้นมาแทนแบบนี้:
+
+```csharp
+[Transaction(TransactionMode.Manual)]
+public class CommandUI : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        // 1. จำลองสร้างหน้าจอออกมา 
+        MainWindow window = new MainWindow();
+
+        // 2. สั่งแสดงผลหน้าจอแบบโต้ตอบ (ผู้ใช้ต้องปิดหน้าต่างก่อน ถึงจะกลับไปจิ้มโปรแกรม Revit ได้)
+        window.ShowDialog();
+
+        return Result.Succeeded;
+    }
+}
+```
+
+ทั้งหมดนี้คือหลักการสร้าง UI เบื้องต้น แต่ในการทำงานที่มีความสลับซับซ้อน เรามักจะไม่เขียนโค้ดที่แตะต้อง Revit API ในไฟล์ `.xaml.cs` ตรงๆ เพราะมันจะมั่วมาก ไปใช้รูปแบบการแยกส่วนที่เรียกว่า **MVVM** ในบทถัดไปกันครับ!

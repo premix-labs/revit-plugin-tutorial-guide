@@ -1,0 +1,98 @@
+---
+title: สร้าง Ribbon (UI)
+description: เปลี่ยนจากการใช้ปุ่ม Add-Ins ธรรมดา มาเป็นการสร้าง Tab และปุ่มเป็นของตัวเองบนหน้าจอ Revit
+---
+
+หลังจากเราเขียน command พื้นฐานรอดแล้ว ความท้าทายต่อไปคือการสร้าง **Ribbon Tab และ Button** ของตัวเอง เพื่อให้ผู้ใช้กดใช้งานได้สะดวกและดูเป็นมืออาชีพมากขึ้น
+
+## `IExternalApplication` คืออะไร?
+
+ในบทที่ผ่านมา เราใช้ `IExternalCommand` ในการรันคำสั่งเมื่อผู้ใช้กดปุ่ม แต่สำหรับรหัสที่เกี่ยวกับการ "วาดหน้าจอ (UI)" เราต้องใช้ **`IExternalApplication`** 
+
+`IExternalApplication` เป็นคลาสที่จะถูก Revit เรียกขึ้นมา **1 ครั้ง ตอนที่โปรแกรม Revit เพิ่งถูกเปิดขึ้นมา** ซึ่งนี่คือจังหวะเวลาเดียวที่เราสามารถเข้าไปแทรกหน้าต่างและแท็บของเราลงในโปรแกรม Revit ได้
+
+## 1. เขียนคลาส `App`
+
+สร้างไฟล์ใหม่ชื่อ `App.cs` และใส่โค้ดชุดนี้ลงไป:
+
+```csharp
+using System;
+using System.Reflection;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+public class App : IExternalApplication
+{
+    public Result OnStartup(UIControlledApplication application)
+    {
+        try
+        {
+            // 1. สร้าง Ribbon Tab กลาง
+            string tabName = "RevitToolkit";
+            application.CreateRibbonTab(tabName);
+
+            // 2. สร้าง Ribbon Panel เอาไว้ใส่ปุ่ม
+            string panelName = "General";
+            RibbonPanel ribbonPanel = application.CreateRibbonPanel(tabName, panelName);
+
+            // 3. เตรียมข้อมูลของปุ่ม (ระบุชื่อปุ่ม รูปภาพ และเส้นทางที่ชี้ไปยัง Command ที่ต้องการให้รันเมื่อกด)
+            // ให้ปุ่มนี้ชี้ไปหา class Command เดิมที่เราเขียนไว้ในบทความก่อนหน้า
+            string thisAssemblyPath = Assembly.GetExecutingAssembly().Location;
+            PushButtonData buttonData = new PushButtonData(
+                name: "cmdHelloWorld",
+                text: "Hello\nRevit",
+                assemblyName: thisAssemblyPath,
+                className: "RevitToolkit.Command"
+            )
+            {
+                ToolTip = "Show a HelloWorld dialog."
+            };
+
+            // 4. นำปุ่มยัดใส่ลง Panel
+            RibbonItem ribbonItem = ribbonPanel.AddItem(buttonData);
+            if (ribbonItem is not PushButton pushButton)
+            {
+                throw new InvalidOperationException("Failed to create the push button.");
+            }
+
+            return Result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            TaskDialog.Show("Error on Startup", ex.Message);
+            return Result.Failed;
+        }
+    }
+
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        return Result.Succeeded;
+    }
+}
+```
+
+## 2. ปรับปรุงไฟล์ `.addin`
+เนื่องจากจุดเริ่มต้น (Entry Point) ของ Plugin เราเปลี่ยนจากตัว `Command` มาเป็น Application วาดหน้าจอ เราจึงต้องแก้ไข `RevitToolkit.addin` เล็กน้อยดังนี้:
+
+1. เปลี่ยน `Type` จาก `Command` เป็น `Application`
+2. ลบแท็ก `<Text>` (เฉพาะ Command เท่านั้นที่มี Text)
+3. เปลี่ยน `FullClassName` ให้ชี้ไปที่ `App`
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <!-- เปลี่ยน Type เป็น Application -->
+  <AddIn Type="Application">
+    <Name>RevitToolkit</Name>
+    <Assembly>RevitToolkit\RevitToolkit.dll</Assembly>
+    <AddInId>YOUR-NEW-GUID-HERE</AddInId>
+    <!-- ให้ชี้ไปที่คลาส Application แทน -->
+    <FullClassName>RevitToolkit.App</FullClassName>
+    <VendorId>PREMIX</VendorId>
+    <VendorDescription>Premix Company</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+```
+
+หลังจากนั้น สั่ง **Build (.NET)** ใหม่อีกครั้ง และลองเปิด Revit 2026 ขึ้นมา คุณจะเห็นแท็บ "RevitToolkit" เกิดขึ้นด้านบนพร้อม panel "General" และปุ่ม "Hello Revit" ที่เราสร้างไว้ครับ!

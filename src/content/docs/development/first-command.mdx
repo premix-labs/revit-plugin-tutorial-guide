@@ -1,0 +1,33 @@
+---
+title: เขียน Command แรก
+description: สร้าง class แบบ IExternalCommand เพื่อให้ Revit เรียก Execute ได้
+---
+
+ถ้าคุณต้องการปุ่ม command ตัวแรก ให้เริ่มจาก `IExternalCommand`
+
+```csharp
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class Command : IExternalCommand
+{
+    public Result Execute(
+        ExternalCommandData commandData,
+        ref string message,
+        ElementSet elements)
+    {
+        TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
+        return Result.Succeeded;
+    }
+}
+```
+
+## จุดสำคัญ
+
+- namespace และ class ต้องตรงกับ `FullClassName` ใน `.addin`
+- `TransactionMode.Manual` เหมาะกับ command ทั่วไป
+- ใช้ `TaskDialog.Show(...)` ทดสอบให้เห็นผลลัพธ์ชัดที่สุดในรอบแรก

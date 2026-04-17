@@ -1,0 +1,41 @@
+---
+title: Deploy Workflow
+description: ทำให้ DLL และ .addin ถูก copy ไปตำแหน่งคงที่ทุกครั้งที่ build
+---
+
+ถ้า `.addin` ชี้ไป `bin\Debug\...` ตรง ๆ คุณจะเจอปัญหา path เปลี่ยนบ่อย
+
+แนวทางที่ดีกว่าคือตั้งให้ copy ไฟล์ไปที่ Addins folder ของ Revit โดยตรงเลย:
+
+- copy `RevitToolkit.addin` ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+- copy `RevitToolkit.dll` และไฟล์อื่นๆ เข้าไปในโฟลเดอร์ย่อย `C:\ProgramData\Autodesk\Revit\Addins\2026\RevitToolkit\`
+
+วิธีนี้ทำให้เราใช้ **Relative Path** ในไฟล์ `.addin` ได้ ซึ่งจะทำให้เราย้ายโปรเจ็กต์ไปเครื่องไหนก็ Build ติดเสมอ!
+
+```xml
+<PropertyGroup>
+  <RevitYear>2026</RevitYear>
+  <RevitAddinDir>$(ProgramData)\Autodesk\Revit\Addins\$(RevitYear)\</RevitAddinDir>
+  <DeployDir>$(RevitAddinDir)$(AssemblyName)\</DeployDir>
+</PropertyGroup>
+
+<Target Name="CopyRevitFiles" AfterTargets="Build">
+  <MakeDir Directories="$(RevitAddinDir)" />
+  <MakeDir Directories="$(DeployDir)" />
+
+  <Copy
+    SourceFiles="$(TargetPath)"
+    DestinationFiles="$(DeployDir)$(TargetFileName)" />
+
+  <Copy
+    SourceFiles="$(ProjectDir)$(AssemblyName).addin"
+    DestinationFiles="$(RevitAddinDir)$(AssemblyName).addin" />
+</Target>
+```
+
+## ผลลัพธ์ที่ต้องการ
+
+- Revit อ่าน `.addin` จาก `ProgramData`
+- `.addin` ชี้แบบ Relative Path ไปหา DLL ที่อยู่ในโฟลเดอร์รหัสเดียวกัน
+- ไม่มี Path ส่วนตัวของเครื่องคุณปะปนใน Source Code เลย!
+

@@ -1,0 +1,32 @@
+---
+title: Debugging
+description: ตั้ง Visual Studio ให้กด F5 แล้วเปิด Revit.exe พร้อม attach debugger
+---
+
+โปรเจ็กต์ Revit plugin เป็น `Class Library` จึงรันตรง ๆ ไม่ได้ ต้องให้ Visual Studio เปิด `Revit.exe` แล้วโหลด plugin เข้าไป
+
+## ตั้งค่า launch profile
+
+- เปิด `Open Debug Launch Profiles UI`
+- เพิ่ม profile แบบ `Executable`
+- ตั้ง `Executable` เป็น:
+
+```text
+C:\Program Files\Autodesk\Revit 2026\Revit.exe
+```
+
+- ตั้ง `Working directory` เป็น:
+
+```text
+C:\Program Files\Autodesk\Revit 2026\
+```
+
+## วิธีใช้
+
+1. วาง breakpoint ใน `Execute(...)`
+2. เลือก profile ที่ชี้ไป `Revit.exe`
+3. กด `F5`
+4. ถ้าใช้ ribbon แบบปัจจุบัน ให้ไปที่ `RevitToolkit > General > Hello Revit`
+5. ถ้าใช้บท command-first ให้ไปที่ `Add-Ins > External Tools > RevitToolkit`
+
+ถ้าตั้งถูก breakpoint จะหยุดใน `Execute(...)`

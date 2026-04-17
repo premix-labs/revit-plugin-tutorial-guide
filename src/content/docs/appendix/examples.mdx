@@ -1,0 +1,104 @@
+---
+title: Examples
+description: ตัวอย่างไฟล์หลักที่ใช้บ่อยในการสร้าง Revit 2026 plugin
+---
+
+ชุดตัวอย่างหน้านี้เป็นแบบ `command-first` สำหรับลองรันคำสั่งเดี่ยว ๆ ก่อน
+ถ้าโปรเจ็กต์ของคุณเปลี่ยนไปใช้ Ribbon เองแล้ว ให้ใช้ `App.cs` แบบ `IExternalApplication` และ `.addin` แบบ `Type="Application"` แทน
+
+## `Command.cs`
+
+```csharp
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class Command : IExternalCommand
+{
+    public Result Execute(
+        ExternalCommandData commandData,
+        ref string message,
+        ElementSet elements)
+    {
+        TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
+        return Result.Succeeded;
+    }
+}
+```
+
+## `RevitToolkit.csproj`
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RevitYear>2026</RevitYear>
+    <RevitAddinDir>$(ProgramData)\Autodesk\Revit\Addins\$(RevitYear)\</RevitAddinDir>
+    <DeployDir>D:\code\Visual Studio\Revit\RevitToolkit\deploy\Revit\$(RevitYear)\RevitToolkit\</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyRevitFiles" AfterTargets="Build">
+    <MakeDir Directories="$(RevitAddinDir)" />
+    <MakeDir Directories="$(DeployDir)" />
+
+    <Copy
+      SourceFiles="$(TargetPath)"
+      DestinationFiles="$(DeployDir)$(TargetFileName)" />
+
+    <Copy
+      SourceFiles="$(ProjectDir)RevitToolkit.addin"
+      DestinationFiles="$(RevitAddinDir)RevitToolkit.addin" />
+  </Target>
+</Project>
+```
+
+## `RevitToolkit.addin`
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Name>RevitToolkit</Name>
+    <Assembly>D:\code\Visual Studio\Revit\RevitToolkit\deploy\Revit\2026\RevitToolkit\RevitToolkit.dll</Assembly>
+    <AddInId>YOUR-NEW-GUID-HERE</AddInId>
+    <FullClassName>RevitToolkit.Command</FullClassName>
+    <Text>RevitToolkit</Text>
+    <VendorId>PREMIX</VendorId>
+    <VendorDescription>Premix Company</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+```
+
+สร้าง GUID ใหม่ทุกครั้งก่อนเอาไปใช้จริง เช่นผ่าน `Tools > Create GUID` ใน Visual Studio
+
+## `launchSettings.json`
+
+```json
+{
+  "profiles": {
+    "Revit 2026": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Program Files\\Autodesk\\Revit 2026\\Revit.exe",
+      "workingDirectory": "C:\\Program Files\\Autodesk\\Revit 2026\\"
+    }
+  }
+}
+```
+

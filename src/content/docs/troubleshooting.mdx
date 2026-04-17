@@ -1,0 +1,40 @@
+---
+title: Troubleshooting
+description: รวมปัญหาที่เจอบ่อยระหว่างตั้งค่า Revit 2026 plugin และวิธีไล่เช็กทีละจุด
+---
+
+## `Duplicated AddInId`
+
+อาการ:
+
+- Revit แจ้งว่า duplicated add-in id
+- plugin ไม่ถูก initialize
+
+วิธีแก้:
+
+- สร้าง GUID ใหม่
+- ใช้ `Registry Format`
+- เอาวงเล็บ `{}` ออกก่อนใส่ใน `.addin`
+
+## Plugin ไม่ขึ้นใน `External Tools`
+
+เช็กตามลำดับนี้
+
+- ไฟล์ `.addin` อยู่ใน `C:\ProgramData\Autodesk\Revit\Addins\2026\` หรือไม่
+- ค่า `Type="Command"` ถูกหรือไม่
+- `FullClassName` ตรงกับ namespace/class จริงหรือไม่
+- `Assembly` ชี้ไป DLL ที่มีอยู่จริงหรือไม่
+
+ถ้าโปรเจ็กต์ของคุณใช้ Ribbon เอง ให้เช็ก `Type="Application"` และ `FullClassName` ต้องชี้ไป `App` แทน
+
+## Build ผ่านแต่ Revit ไม่โหลด
+
+- ดูว่า `.addin` ยังชี้ไป path เก่าจาก `bin\Debug` หรือไม่
+- เช็กว่า deploy folder มี DLL ล่าสุดจริง
+- ปิด Revit แล้วเปิดใหม่หลัง build
+
+## Debug ไม่เข้า breakpoint
+
+- ตรวจว่า launch profile ชี้ไป `Revit.exe` จริง
+- ตรวจว่ากด `F5` จาก profile ที่ถูก
+- ตรวจว่าเปิด command จากเมนูที่ตรงกับชนิด add-in ของคุณ หลัง debugger attach แล้ว

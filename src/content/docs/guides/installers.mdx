@@ -1,0 +1,60 @@
+---
+title: การทำตัวติดตั้ง (Build Installer)
+description: ได้เวลาแพ็คไฟล์ DLL และ Addins ให้เป็นไฟล์ .exe หรือ .msi เพื่อแจกจ่ายให้ลูกค้านำไปติดตั้งง่ายๆ
+---
+
+เมื่อโปรเจ็กต์ของเรานิ่งแล้ว การจะให้ลูกค้าหรือเพื่อนร่วมงาน ก๊อปปี้ไฟล์เอาไปวางในโฟลเดอร์รันยาวๆ ของ `%ProgramData%` ทีละไฟล์ๆ คงรบกวนเวลาทุกคนในออฟฟิศน่าดู 
+
+สิ่งที่นักพัฒนามืออาชีพทำคือสร้าง **Installer** เพื่อกดคลิกเดียวจบบริบูรณ์ 
+
+สำหรับ Revit เครื่องมือจัดทำ Setup ที่ได้รับความนิยมมีอยู่ 2 ตัวหลัก:
+1. **Inno Setup** (ได้ไฟล์ `.exe`)
+2. **WiX Toolset** (ได้ไฟล์ `.msi`)
+
+ในบทนี้เราจะมาสรุปแนวทางด้วย Inno Setup ซึ่งทำได้ง่ายและเห็นผลลัพธ์ไวมากสำหรับมือใหม่ครับ
+
+## Inno Setup (.exe) 
+
+[Inno Setup](https://jrsoftware.org/isinfo.php) เป็นโปรแกรมฟรีคลาสสิกของโลก Windows. คุณแค่สร้างสคริปต์สั้นๆ `.iss` จากนั้นโปรแกรมจะจับยัดไฟล์ของคุณบีบอัดลงไฟล์ติดตั้งตัวเดียวให้เลย 
+
+### ตัวอย่าง Inno Setup Script
+
+1. โหลดและลง Inno Setup ในเครื่อง
+2. เปิดขึ้นมา กด New Script และคัดลอกโค้ดนี้ลงไป (โดยคุณต้องเปลี่ยนเส้นทางและชื่อไฟล์ให้ตรงกับเครื่องของคุณด้วย)
+
+```pascal
+[Setup]
+; ตั้งชื่อโปรแกรมและเวอร์ชันที่จะไปโผล่ในหน้า "Add/Remove Programs" ของ Windows
+AppName=RevitToolkit 2026
+AppVersion=1.0.0
+AppPublisher=Premix Company
+; สิ่งสำคัญคือเราตั้งให้ลงไฟล์กระจายไปที่ C:\ProgramData ของ Revit
+DefaultDirName={commonappdata}\Autodesk\Revit\Addins\2026
+DisableDirPage=yes
+OutputBaseFilename=RevitToolkit_v1.0.0_Setup
+
+[Files]
+; ยัดไฟล์ Manifest
+Source: "D:\code\Visual Studio\Revit\RevitToolkit\RevitToolkit.addin"; DestDir: "{app}"; Flags: ignoreversion
+; ยัดไฟล์ DLL ยัดลงโฟลเดอร์ซับ RevitToolkit 
+Source: "D:\code\Visual Studio\Revit\RevitToolkit\bin\Release\net8.0-windows\RevitToolkit.dll"; DestDir: "{app}\RevitToolkit"; Flags: ignoreversion
+```
+
+3. กดเมนู **Build > Compile**
+4. หากทุกอย่างถูกต้อง มันจะยัดไฟล์ทั้ง 2 ออกมาเป็น `RevitToolkit_v1.0.0_Setup.exe` 
+
+ทีนี้คุณก็ก๊อปปี้เฉพาะไฟล์ .exe แจกจ่ายให้คนทั้งออฟฟิศคลิกติดตั้งได้เลยครับ ทุกอย่างจะเข้าไปอยู่ใน `C:\ProgramData\Autodesk\Revit\Addins\2026` โดยอัตโนมัติ
+
+## WiX Toolset (.msi)
+
+(เนื้อหาสำหรับ Advanced User)
+WiX Toolset (`.msi`) เป็นมาตรฐานการติดตั้งของระบบองค์กร Microsoft (Windows Installer XML) ข้อดีคือ
+- หากลูกค้าไม่ชอบใจ เขาสามารถลบผ่าน Group Policy แบบเงียบๆ ออกได้
+- เหมาะกับการลงผ่านเน็ตเวิร์ค
+- โค้ดที่สร้าง installer เขียนเป็นไฟล์ `.wxs` (โครงสร้าง XML)
+
+อย่างไรก็ตาม WiX Toolset ค่อนข้างเรียนรู้ได้ยากกว่า Inno Setup มาก ต้องอาศัยความเข้าใจระบบ Registry เป็นอย่างดี 
+
+:::note
+**แนะนำ:** เริ่มต้นแจกจ่ายปลั๊กอินให้ใช้ **Inno Setup** ไปก่อน เพราะตั้งค่า 5 นาทีเสร็จ และคุณจะได้หน้าตาตัวติดตั้งแบบ "Next ๆ ตกลง" อันสุดคลาสสิคโดยไม่ต้องเขียนโค้ดอะไรเพิ่ม
+:::

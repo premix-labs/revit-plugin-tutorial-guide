@@ -1,40 +1,29 @@
 ---
-title: Welcome to Starlight
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
-hero:
-  tagline: Congrats on setting up a new Starlight project!
-  image:
-    file: ../../assets/houston.webp
-  actions:
-    - text: Example Guide
-      link: /guides/example/
-      icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
-      icon: external
-      variant: minimal
+title: คู่มือสร้าง Revit 2026 Plugin
+description: คู่มือภาษาไทยปนศัพท์เทคนิคสำหรับสร้าง Revit 2026 plugin ด้วย .NET 8 และ Revit API ให้รันได้จริง
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+เอกสารชุดนี้พาคุณตั้งค่า `Revit 2026 plugin` ตั้งแต่เตรียมเครื่องจนถึงการทดสอบและ debug ใน `Visual Studio`
 
-## Next steps
+## สิ่งที่คุณจะได้เมื่อทำจบ
 
-<CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
-</CardGrid>
+- โปรเจ็กต์ `net8.0-windows` และ `x64` ที่ reference `RevitAPI.dll` และ `RevitAPIUI.dll` ถูกต้อง
+- plugin แบบ `IExternalCommand` สำหรับ command-first และ `IExternalApplication` สำหรับสร้าง Ribbon/UI
+- workflow สำหรับ copy `DLL` ไป deploy folder คงที่ และ copy `.addin` ไป `ProgramData`
+- debug profile ที่กด `F5` แล้วเปิด `Revit.exe` พร้อม attach debugger ได้
+
+## ลำดับการอ่าน
+
+1. [Quick Start](/quick-start/)
+2. [เตรียมเครื่อง](/setup/prerequisites/)
+3. [ตั้งค่าโปรเจ็กต์](/setup/project-setup/)
+4. [เขียน Command แรก](/development/first-command/)
+5. [ลงทะเบียน .addin](/development/addin-registration/)
+6. [Deploy Workflow](/development/deploy-workflow/)
+7. [Debugging](/development/debugging/)
+8. [ทดสอบใน Revit](/development/testing-in-revit/)
+9. [Troubleshooting](/troubleshooting/)
+
+:::caution
+Revit 2026 ใช้ .NET 8 ดังนั้นตัวอย่างทั้งหมดในเอกสารนี้จะยึด `net8.0-windows` เป็นหลัก
+:::

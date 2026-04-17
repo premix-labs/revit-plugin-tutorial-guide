@@ -1,0 +1,31 @@
+---
+title: เตรียมเครื่อง
+description: สิ่งที่ต้องมีบน Windows ก่อนเริ่มสร้าง Revit 2026 plugin
+---
+
+## ซอฟต์แวร์ที่ต้องติดตั้ง
+
+- `Visual Studio 2022`
+- `.NET 8 SDK`
+- `Revit 2026`
+
+## ตำแหน่งที่ต้องรู้
+
+DLL ของ Revit API ปกติอยู่ที่:
+
+```text
+C:\Program Files\Autodesk\Revit 2026\
+```
+
+ไฟล์ที่ต้องใช้มีอย่างน้อย:
+
+- `RevitAPI.dll`
+- `RevitAPIUI.dll`
+
+## ทำไมต้องใช้ .NET 8
+
+Revit 2026 รันบน runtime ชุดนี้ ดังนั้น plugin ใหม่ควร target เป็น `net8.0-windows` ไม่ใช่ `net10.0` และไม่ใช่ `.NET Framework 4.8`
+
+:::note
+ถ้าคุณต้องรองรับ Revit คนละ major version ให้แยก target ตามเวอร์ชัน Revit อย่าฝืนใช้ target เดียวครอบทั้งหมด
+:::

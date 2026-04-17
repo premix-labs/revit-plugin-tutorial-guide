@@ -1,0 +1,66 @@
+---
+title: การทำรองรับหลายเวอร์ชัน (Multi-Version)
+description: จัดการ Source Code ชุดเดียวให้รองรับ Revit 2024, 2025 และ 2026 พร้อมกัน
+---
+
+ปัญหาโลกแตกของคนทำ Revit Plugin คือ "ผู้ใช้งานในบริษัทใช้ Revit คนละเวอร์ชันกัน"
+
+Revit มีการเปลี่ยน API ในทุกๆ ปี (เช่น โค้ดที่รันบน 2024 ได้ อาจจะพังบน 2026) ดังนั้นเราจึงไม่ควรรวมทุกเวอร์ชันไว้ใน `TargetFramework` เดียวกัน เราต้องแยกร่างออกเป็นโปรเจ็กต์ย่อยๆ หรือใช้ **Shared Project**
+
+วิธีที่นิยมในปัจจุบันและได้รับการยอมรับระดับสากล จะมี 2 แนวทางหลักครับ
+
+## แนวทางที่ 1: ใช้ Shared Project (เก่าแต่ชัวร์)
+
+จุดอ่อนของการสร้างโปรเจ็กต์ `RevitToolkit2024`, `RevitToolkit2025`, `RevitToolkit2026` แยกกัน คือคุณต้อง Copy-Paste โค้ดซ้ำไปซ้ำมา
+
+วิธีแก้คือเอาโค้ดกลางไปใส่ใน "Shared Project"
+1. ให้สร้างโปรเจ็กต์แบบ `Shared Project` เปล่าๆ ชื่อ `RevitToolkit.Shared`
+2. ย้ายไฟล์ `.cs` และโค้ดทั้งหมด (XAML, Config) ไปไว้ข้างในนั้น
+3. ในโปรเจ็กต์เวอร์ชันเฉพาะกาล (เช่น 2026) ให้กด **Add Reference > Shared Projects > ติ๊กเลือก RevitToolkit.Shared** 
+
+แค่นี้เวลาคุณแก้โค้ดใน 2024 ก็จะกระเทือนไปถึง 2026 ด้วยทันที!
+
+## แนวทางที่ 2: ใช้ Directive `#if` (สมัยใหม่ และยอดฮิต)
+ถ้าคุณรวบทุกเวอร์ชันไว้ใน `.csproj` เดียวด้วยแท็ก `<TargetFrameworks>net48;net8.0-windows</TargetFrameworks>` คุณจะเจอปัญหาบรรทัดแดงเวลา API ของ 2 เวอร์ชันตีกัน
+
+เราจึงใช้ **Preprocessor Directives** เพื่อบอก Compiler ให้ตัดโค้ดบางส่วนทิ้งตอน Build สำหรับเวอร์ชันนั้นๆ 
+
+### 1. ใส่ตัวแปร Revit เข้าไปใน .csproj
+```xml
+  <!-- ถ้ากำลัง Build ของปี 2026 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Revit2026'">
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <DefineConstants>REVIT2026</DefineConstants>
+  </PropertyGroup>
+
+  <!-- ถ้ากำลัง Build ของปี 2024 (สมมติ) -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Revit2024'">
+    <TargetFramework>net48</TargetFramework>
+    <DefineConstants>REVIT2024</DefineConstants>
+  </PropertyGroup>
+```
+
+### 2. ใช้ #if ใน Code (C#)
+
+สมมติว่า Revit API ในปี 2024 ใช้คำสั่ง `GetUnit()` แต่พอมาปี 2026 เปลี่ยนชื่อเป็น `GetElementUnit()`
+
+คุณสามารถเขียนไฟล์ `.cs` เดียวกันให้รองรับ 2 แบบได้:
+
+```csharp
+public double ดึงความยาวคาน(Element beam)
+{
+#if REVIT2026
+    // โค้ดบรรทัดนี้จะถูกรวมเข้าไปเฉพาะตอนเราเลือกตลับ Build เป็นของปี 2026
+    return beam.GetElementUnit();
+    
+#elif REVIT2024
+    // ส่วนนี้จะทำงานก็ต่อเมื่อเราสลับไป Build ตัว 2024 ให้ลูกค้าที่ยังไม่อัปเกรดเครื่อง
+    return beam.GetUnit();
+    
+#endif
+}
+```
+
+:::tip
+มือใหม่ควรใช้ท่ายากพวกนี้ตอนไหน? คำตอบคือ **เมื่อคุณมีลูกค้าเยอะขึ้น** ครับ หากทำงานในบริษัทตัวเองที่ทุกคนใช้ Revit 2026 อยู่แล้ว ให้ยึด Target เดียวแบบบทก่อนหน้าไปก่อน ไม่ต้องรีบทำให้โค้ดซับซ้อนเกินความจำเป็น
+:::

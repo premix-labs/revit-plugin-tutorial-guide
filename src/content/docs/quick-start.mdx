@@ -1,0 +1,105 @@
+---
+title: Quick Start
+description: ทำตามแบบเร็วเพื่อให้ Revit 2026 โหลด plugin ตัวแรกได้ในเวลาไม่กี่นาที
+---
+
+หน้านี้เหมาะกับคนที่อยากให้ plugin ขึ้นใน Revit ก่อน แล้วค่อยย้อนกลับไปอ่านรายละเอียดในบทอื่น
+
+## 1. เตรียมเครื่อง
+
+- ติดตั้ง `Visual Studio 2022`
+- ติดตั้ง `.NET 8 SDK`
+- ติดตั้ง `Revit 2026`
+
+## 2. สร้างโปรเจ็กต์
+
+สร้างโปรเจ็กต์แบบ `Class Library` แล้วตั้งค่า `RevitToolkit.csproj` ให้ใกล้เคียงนี้
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
+```
+
+## 3. เขียน command แรก
+
+สร้าง `Command.cs`
+
+```csharp
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class Command : IExternalCommand
+{
+    public Result Execute(
+        ExternalCommandData commandData,
+        ref string message,
+        ElementSet elements)
+    {
+        TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
+        return Result.Succeeded;
+    }
+}
+```
+
+## 4. สร้างไฟล์ `.addin`
+
+สร้าง `RevitToolkit.addin`
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Name>RevitToolkit</Name>
+    <!-- โหลด DLL ผ่าน Relative Path ตามโฟลเดอร์ที่ Deploy -->
+    <Assembly>RevitToolkit\RevitToolkit.dll</Assembly>
+    <AddInId>YOUR-NEW-GUID-HERE</AddInId>
+    <FullClassName>RevitToolkit.Command</FullClassName>
+    <Text>RevitToolkit</Text>
+    <VendorId>PREMIX</VendorId>
+    <VendorDescription>Premix Company</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+```
+
+## 5. ตั้ง deploy path และ copy ไฟล์หลัง build
+
+ให้ `.csproj` มี target สำหรับ copy:
+
+- `RevitToolkit.dll` ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\RevitToolkit\`
+- `RevitToolkit.addin` ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+
+ถ้าข้ามขั้นนี้ Revit จะยังไม่รู้จัก plugin ของคุณ
+
+## 6. ทดสอบ
+
+1. Build โปรเจ็กต์
+2. เปิด Revit 2026
+3. กด `Always Load` ถ้ามี warning เรื่อง unsigned add-in
+4. ไปที่ `Add-Ins > External Tools > RevitToolkit`
+5. ถ้าขึ้น `Hello from Revit 2026` แปลว่า setup ผ่านแล้ว
+
+:::caution
+`AddInId` ต้องเป็น GUID ใหม่ของโปรเจ็กต์คุณเอง ห้ามคัดลอกค่าเดิมจากตัวอย่างไปใช้ตรง ๆ
+:::
+
