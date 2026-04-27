@@ -2,7 +2,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-	site: 'https://revittoolkit.local',
+	site: 'https://premix-labs.github.io',
+	base: '/revit-plugin-tutorial-guide',
 	server: {
 		host: true,
 	},
