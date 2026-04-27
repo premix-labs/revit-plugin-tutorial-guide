@@ -10,13 +10,13 @@ description: เรียนรู้วิธีเปิด Transaction เพ
 2. **Start & Commit**: ต้องเริ่มเปิดตัวด้วย `.Start()` และปิดจบงานด้วย `.Commit()`
 3. **TransactionMode.Manual**: ด้านบนสุดของคลาส `Command` ต้องกำกับไว้เป็น `Manual` (อย่างที่เราทำมาตลอด)
 
-## ตัวอย่าง: การเขียนค่า Parameter อัตโนมัติลงในคาน (Beam)
+## ตัวอย่าง: การเขียนค่า Parameter อัตโนมัติลงในเสา (Column)
 
-สมมติว่าเราต้องการเขียนเครื่องหมาย (Mark) เรียงเบอร์ให้กับ "คาน" ทั้งหมดในโมเดล เช่น `B-1`, `B-2`, `B-3`
+สมมติว่าเราต้องการเขียนเครื่องหมาย (Mark) เรียงเบอร์ให้กับ "เสา" ทั้งหมดในโมเดล เช่น `C-1`, `C-2`, `C-3` เพื่อให้สอดคล้องกับบทที่แล้วที่เราเรียนดึงข้อมูลเสากันมาครับ
 
 ไปแก้ไขโค้ดใน `Command.cs` ใหม่อีกครั้ง:
 
-```csharp
+```csharp title="Command.cs"
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -33,20 +33,20 @@ public class Command : IExternalCommand
     {
         Document doc = commandData.Application.ActiveUIDocument.Document;
 
-        // 1. ดึงคานทั้งหมดมาก่อน
-        var beams = new FilteredElementCollector(doc)
-            .OfCategory(BuiltInCategory.OST_StructuralFraming)
+        // 1. ดึงเสาทั้งหมดมาก่อน (อิงโค้ดจากบทก่อนหน้าเป๊ะๆ)
+        var columns = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
             .WhereElementIsNotElementType()
             .ToElements();
 
-        if (beams.Count == 0)
+        if (columns.Count == 0)
         {
-            TaskDialog.Show("RevitToolkit", "ไม่พบคานในโมเดล");
+            TaskDialog.Show("RevitToolkit", "ไม่พบเสาในโมเดล");
             return Result.Succeeded;
         }
 
         // 2. ใช้โครงสร้าง using สร้าง Transaction ใหม่ขึ้นมา
-        using (Transaction trans = new Transaction(doc, "Auto Number Beams"))
+        using (Transaction trans = new Transaction(doc, "Auto Number Columns"))
         {
             try
             {
@@ -54,15 +54,15 @@ public class Command : IExternalCommand
                 trans.Start();
 
                 int counter = 1;
-                foreach (Element beam in beams)
+                foreach (Element column in columns)
                 {
                     // 4. เข้าถึงพารามิเตอร์ "Mark" (หมายเลข)
-                    Parameter markParam = beam.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+                    Parameter markParam = column.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
                     
                     if (markParam != null && !markParam.IsReadOnly)
                     {
                         // 5. เขียนค่ากลับเข้าไปในพารามิเตอร์
-                        markParam.Set($"B-{counter}");
+                        markParam.Set($"C-{counter}");
                         counter++;
                     }
                 }
@@ -70,7 +70,7 @@ public class Command : IExternalCommand
                 // 6. กดเซฟยืนยันคำสั่ง
                 trans.Commit();
 
-                TaskDialog.Show("RevitToolkit", $"อัปเดตหมายเลขคานสำเร็จ {counter - 1} ตัว");
+                TaskDialog.Show("RevitToolkit", $"อัปเดตหมายเลขเสาสำเร็จ {counter - 1} ต้น");
                 return Result.Succeeded;
             }
             catch (Exception ex)

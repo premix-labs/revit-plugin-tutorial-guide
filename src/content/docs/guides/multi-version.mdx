@@ -26,7 +26,7 @@ Revit มีการเปลี่ยน API ในทุกๆ ปี (เช
 เราจึงใช้ **Preprocessor Directives** เพื่อบอก Compiler ให้ตัดโค้ดบางส่วนทิ้งตอน Build สำหรับเวอร์ชันนั้นๆ 
 
 ### 1. ใส่ตัวแปร Revit เข้าไปใน .csproj
-```xml
+```xml title="อัปเดตไฟล์ .csproj"
   <!-- ถ้ากำลัง Build ของปี 2026 -->
   <PropertyGroup Condition="'$(Configuration)' == 'Revit2026'">
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -46,7 +46,7 @@ Revit มีการเปลี่ยน API ในทุกๆ ปี (เช
 
 คุณสามารถเขียนไฟล์ `.cs` เดียวกันให้รองรับ 2 แบบได้:
 
-```csharp
+```csharp title="Command.cs (เวอร์ชันแชร์)"
 public double ดึงความยาวคาน(Element beam)
 {
 #if REVIT2026

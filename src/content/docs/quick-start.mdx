@@ -15,22 +15,26 @@ description: ทำตามแบบเร็วเพื่อให้ Revit 
 
 สร้างโปรเจ็กต์แบบ `Class Library` แล้วตั้งค่า `RevitToolkit.csproj` ให้ใกล้เคียงนี้
 
-```xml
+```xml title="โปรเจ็กต์.csproj"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- Revit 2026 ใช้ .NET 8 -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- ค่าบังคับสำหรับ Revit ต้องเป็น x64 เท่านั้น -->
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="RevitAPI">
       <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+      <!-- สำคัญมาก: ห้าม copy RevitAPI ลงไปโฟลเดอร์ output -->
       <Private>false</Private>
     </Reference>
     <Reference Include="RevitAPIUI">
       <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
+      <!-- สำคัญมาก: ห้าม copy RevitAPIUI ลงไปโฟลเดอร์ output -->
       <Private>false</Private>
     </Reference>
   </ItemGroup>
@@ -41,22 +45,27 @@ description: ทำตามแบบเร็วเพื่อให้ Revit 
 
 สร้าง `Command.cs`
 
-```csharp
+```csharp title="Command.cs"
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
 namespace RevitToolkit;
 
+// 1. กำหนดให้รัน Transaction แบบ Manual
 [Transaction(TransactionMode.Manual)]
 public class Command : IExternalCommand
 {
+    // 2. เมธอด Execute จะถูกเรียกอัตโนมัติเมื่อกดปุ่มบน Revit
     public Result Execute(
         ExternalCommandData commandData,
         ref string message,
         ElementSet elements)
     {
+        // 3. แสดงหน้าต่างแจ้งเตือนง่ายๆ เพื่อทดสอบว่าปลั๊กอินทำงานได้
         TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
+
+        // 4. คืนค่า Succeeded เพื่อบอก Revit ว่าคำสั่งจบสมบูรณ์
         return Result.Succeeded;
     }
 }
@@ -64,32 +73,47 @@ public class Command : IExternalCommand
 
 ## 4. สร้างไฟล์ `.addin`
 
-สร้าง `RevitToolkit.addin`
+สร้าง `RevitToolkit.addin` (ตั้งชื่อให้ตรงกับชื่อโปรเจ็กต์ของคุณ)
 
-```xml
+```xml title="โปรเจ็กต์.addin"
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
   <AddIn Type="Command">
     <Name>RevitToolkit</Name>
     <!-- โหลด DLL ผ่าน Relative Path ตามโฟลเดอร์ที่ Deploy -->
     <Assembly>RevitToolkit\RevitToolkit.dll</Assembly>
+
+    <!-- ฝัง GUID เฉพาะตัวของโปรเจ็กต์ อย่าซ้ำกับคนอื่น -->
     <AddInId>YOUR-NEW-GUID-HERE</AddInId>
+
+    <!-- Path ของ Class เต็มรูปแบบ (Namespace.Class) ชี้ไปยังไฟล์ Command.cs -->
     <FullClassName>RevitToolkit.Command</FullClassName>
     <Text>RevitToolkit</Text>
+
     <VendorId>PREMIX</VendorId>
     <VendorDescription>Premix Company</VendorDescription>
   </AddIn>
 </RevitAddIns>
 ```
 
+:::tip
+หากคุณใช้ชื่อโปรเจ็กต์อื่น (เช่น `RevitToolkit`) อย่าลืมตั้งชื่อไฟล์นี้เป็น **`ชื่อโปรเจ็กต์.addin`** และแก้ชี้เป้า `<Assembly>` ให้เป็น `ชื่อโปรเจ็กต์\ชื่อโปรเจ็กต์.dll` ด้วยนะครับ
+:::
+
 ## 5. ตั้ง deploy path และ copy ไฟล์หลัง build
 
-ให้ `.csproj` มี target สำหรับ copy:
+ให้คุณเพิ่มบล็อก `<Target>` เข้าไปด้านล่างสุดในแฟ้ม `.csproj` ของคุณ (ก่อนแท็กปิด `</Project>`) เพื่อให้ระบบก๊อปปี้ไฟล์ `.dll` และ `.addin` ไปลงในเครื่องอัตโนมัติทุกครั้งที่กดรัน:
 
-- `RevitToolkit.dll` ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\RevitToolkit\`
-- `RevitToolkit.addin` ไป `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+```xml
+  <Target Name="CopyRevitFiles" AfterTargets="Build">
+    <!-- ก๊อปปี้ DLL เข้าไปโฟลเดอร์รหัสตามชื่อโปรเจ็กต์ $(AssemblyName) -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProgramData)\Autodesk\Revit\Addins\2026\$(AssemblyName)\" />
+    <!-- ก๊อปปี้ไฟล์ .addin เข้าโฟลเดอร์หลักของ Revit อัตโนมัติ -->
+    <Copy SourceFiles="$(ProjectDir)$(AssemblyName).addin" DestinationFolder="$(ProgramData)\Autodesk\Revit\Addins\2026\" />
+  </Target>
+```
 
-ถ้าข้ามขั้นนี้ Revit จะยังไม่รู้จัก plugin ของคุณ
+ถ้าข้ามขั้นนี้ Revit จะยังไม่รู้จัก plugin ของคุณ เพราะยังไม่มีแฟ้มข้อมูลส่งไปลงทะเบียนในโฟลเดอร์ของระบบครับ
 
 ## 6. ทดสอบ
 
@@ -102,4 +126,3 @@ public class Command : IExternalCommand
 :::caution
 `AddInId` ต้องเป็น GUID ใหม่ของโปรเจ็กต์คุณเอง ห้ามคัดลอกค่าเดิมจากตัวอย่างไปใช้ตรง ๆ
 :::
-

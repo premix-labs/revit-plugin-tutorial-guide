@@ -15,9 +15,11 @@ description: เปลี่ยนจากการใช้ปุ่ม Add-In
 
 สร้างไฟล์ใหม่ชื่อ `App.cs` และใส่โค้ดชุดนี้ลงไป:
 
-```csharp
+```csharp title="App.cs"
 using System;
+using System.IO;
 using System.Reflection;
+using System.Windows.Media.Imaging;
 using Autodesk.Revit.UI;
 
 namespace RevitToolkit;
@@ -36,9 +38,10 @@ public class App : IExternalApplication
             string panelName = "General";
             RibbonPanel ribbonPanel = application.CreateRibbonPanel(tabName, panelName);
 
-            // 3. เตรียมข้อมูลของปุ่ม (ระบุชื่อปุ่ม รูปภาพ และเส้นทางที่ชี้ไปยัง Command ที่ต้องการให้รันเมื่อกด)
-            // ให้ปุ่มนี้ชี้ไปหา class Command เดิมที่เราเขียนไว้ในบทความก่อนหน้า
+            // 3. เตรียมข้อมูลของปุ่ม (ระบุชื่อปุ่ม และเส้นทางที่ชี้ไปยัง Command ที่ต้องการให้รันเมื่อกด)
             string thisAssemblyPath = Assembly.GetExecutingAssembly().Location;
+            string assemblyFolder = Path.GetDirectoryName(thisAssemblyPath);
+
             PushButtonData buttonData = new PushButtonData(
                 name: "cmdHelloWorld",
                 text: "Hello\nRevit",
@@ -49,7 +52,14 @@ public class App : IExternalApplication
                 ToolTip = "Show a HelloWorld dialog."
             };
 
-            // 4. นำปุ่มยัดใส่ลง Panel
+            // 4. ใส่ภาพรูปภาพให้ปุ่ม (LargeImage มักใช้ 32x32 px)
+            string iconPath = Path.Combine(assemblyFolder, "icon", "icon.png");
+            if (File.Exists(iconPath))
+            {
+                buttonData.LargeImage = new BitmapImage(new Uri(iconPath));
+            }
+
+            // 5. นำปุ่มยัดใส่ลง Panel
             RibbonItem ribbonItem = ribbonPanel.AddItem(buttonData);
             if (ribbonItem is not PushButton pushButton)
             {
@@ -72,6 +82,15 @@ public class App : IExternalApplication
 }
 ```
 
+### 💡 การใส่รูปภาพไอคอนให้ปุ่ม (Icon)
+
+จากโค้ดด้านบนใน ข้อ 4. เราได้มีการโหลดรูปภาพด้วยกลุ่มคำสั่ง `BitmapImage` หากคุณต้องการให้ปุ่มมีรูปภาพ ให้ทำตามนี้ครับ:
+
+1. หารูปภาพนามสกุล `.png` สวยๆ ขนาด **32x32 pixel** 
+2. สร้างโฟลเดอร์ชื่อ `icon` ในโปรเจ็กต์ นำรูปภาพตั้งชื่อว่า `icon.png` จับโยนใส่เข้าไปในโฟลเดอร์ `icon` ของคุณ
+3. กดย่อโปรเจ็กต์คลิกที่รูปภาพ และไปดูที่หน้า Properties (มุมขวาล่าง) ให้ตั้งค่า **Copy to Output Directory** เป็น **`Copy if newer`** เพื่ออนุญาตให้รูปก็อปปี้เข้าไปแนบข้างๆ ไฟล์ `.dll` อัตโนมัติเวลาเรากด Build 
+4. **⚠️ สำคัญมาก:** โมดูล `BitmapImage` เป็นเทคโนโลยีของหน้าต่าง WPF หากพิมพ์ตามแล้วหาไฟล์ไม่เจอ (ขึ้น Error สีแดง) ให้กลับไปที่ไฟล์ `โปรเจ็กต์.csproj` แล้วเพิ่มบรรทัด `<UseWPF>true</UseWPF>` เข้าไปในสุดไว้ใต้ `<Nullable>` ครับ
+
 ## 2. ปรับปรุงไฟล์ `.addin`
 เนื่องจากจุดเริ่มต้น (Entry Point) ของ Plugin เราเปลี่ยนจากตัว `Command` มาเป็น Application วาดหน้าจอ เราจึงต้องแก้ไข `RevitToolkit.addin` เล็กน้อยดังนี้:
 
@@ -79,7 +98,7 @@ public class App : IExternalApplication
 2. ลบแท็ก `<Text>` (เฉพาะ Command เท่านั้นที่มี Text)
 3. เปลี่ยน `FullClassName` ให้ชี้ไปที่ `App`
 
-```xml
+```xml title="โปรเจ็กต์.addin"
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
   <!-- เปลี่ยน Type เป็น Application -->

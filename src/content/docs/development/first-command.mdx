@@ -3,24 +3,31 @@ title: เขียน Command แรก
 description: สร้าง class แบบ IExternalCommand เพื่อให้ Revit เรียก Execute ได้
 ---
 
-ถ้าคุณต้องการปุ่ม command ตัวแรก ให้เริ่มจาก `IExternalCommand`
+## โครงสร้างพื้นฐาน
 
-```csharp
+เริ่มต้นให้คุณสร้างไฟล์ชื่อ `Command.cs` ในโปรเจ็กต์ และใส่โค้ดตั้งต้นนี้ลงไปครับ:
+
+```csharp title="Command.cs"
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
 namespace RevitToolkit;
 
+// 1. TransactionMode.Manual: เราจะจัดการการบันทึกสถานะ (แก้ไขโมเดล) ด้วยตัวเอง
 [Transaction(TransactionMode.Manual)]
-public class Command : IExternalCommand
+public class Command : IExternalCommand // 2. คลาสถูกสืบทอดจาก IExternalCommand เสมอ
 {
+    // 3. ฟังก์ชันการทำงานหลัก (Entry Point) 
     public Result Execute(
-        ExternalCommandData commandData,
-        ref string message,
-        ElementSet elements)
+        ExternalCommandData commandData, // เก็บข้อมูลเกี่ยวกับ Application ปัจจุบัน (เอกสารที่เปิดอยู่)
+        ref string message,              // ตัวแปรเก็บค่า error หากประมวลผลล้มเหลว
+        ElementSet elements)             // สำหรับทำไฮไลท์ element เวลาเกิด error
     {
+        // 4. แสดงผลทดสอบที่หน้าจอ
         TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
+        
+        // 5. ส่งกลับบอก Revit ว่างานสำเร็จ
         return Result.Succeeded;
     }
 }

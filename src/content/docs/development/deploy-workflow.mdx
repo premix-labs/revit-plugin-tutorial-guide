@@ -12,7 +12,7 @@ description: ทำให้ DLL และ .addin ถูก copy ไปตำแ
 
 วิธีนี้ทำให้เราใช้ **Relative Path** ในไฟล์ `.addin` ได้ ซึ่งจะทำให้เราย้ายโปรเจ็กต์ไปเครื่องไหนก็ Build ติดเสมอ!
 
-```xml
+```xml title="โปรเจ็กต์.csproj"
 <PropertyGroup>
   <RevitYear>2026</RevitYear>
   <RevitAddinDir>$(ProgramData)\Autodesk\Revit\Addins\$(RevitYear)\</RevitAddinDir>
