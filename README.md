@@ -3,7 +3,7 @@
   <p><b>คู่มือภาษาไทยสำหรับวิศวกรโครงสร้างและนักพัฒนา สอนสร้าง Revit Plugin (2026-2027) ด้วย C# และ .NET 8/10 แบบจับมือทำตั้งแต่ศูนย์จนถึงระบบ CI/CD</b></p>
   
   <a href="https://premix-labs.github.io/revit-plugin-tutorial-guide/">
-    <img src="https://img.shields.io/badge/📖_อ่านคู่มือออนไลน์-คลิกที่นี่-blue?style=for-the-badge" alt="Read the Guide" />
+    <img src="https://img.shields.io/badge/📖_Read_Online-Click_Here-blue?style=for-the-badge" alt="Read the Guide" />
   </a>
   <br/><br/>
 
