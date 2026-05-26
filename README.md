@@ -21,7 +21,7 @@ npm run build
 
 ## หมายเหตุเรื่อง dependency
 
-โปรเจ็กต์นี้ล็อก `astro` เป็น `5.6.1` และใช้ dependency set ที่ `npm install` แล้ว build ผ่านกับ `Starlight` ใน environment นี้
+โปรเจ็กต์นี้ได้รับการอัปเดตระบบและใช้ `astro` เวอร์ชันล่าสุด `^6.3.7` ร่วมกับ `@astrojs/starlight` เวอร์ชันล่าสุด `^0.39.2` ซึ่งคอมไพล์ผ่านอย่างสมบูรณ์แบบใน environment นี้
 
 ## เอกสารหลักในไซต์
 

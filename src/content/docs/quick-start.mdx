@@ -18,28 +18,34 @@ description: ทำตามแบบเร็วเพื่อให้ Revit 
 ```xml title="โปรเจ็กต์.csproj"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- Revit 2026 ใช้ .NET 8 -->
+    <!-- Revit 2026 รันบน .NET 8 เป็นมาตรฐานบังคับ -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- ค่าบังคับสำหรับ Revit ต้องเป็น x64 เท่านั้น -->
+    <!-- สำคัญ: ต้องระบุเป็น x64 เท่านั้น ห้ามเป็น Any CPU เพราะ Revit ทำงานบน 64-bit เท่านั้น -->
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- อ้างอิง Core API สำหรับการเข้าถึงโมเดลและพารามิเตอร์วัตถุ -->
     <Reference Include="RevitAPI">
       <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
-      <!-- สำคัญมาก: ห้าม copy RevitAPI ลงไปโฟลเดอร์ output -->
+      <!-- <Private>false</Private> (Copy Local = False) ป้องกันไม่ให้ก๊อปปี้ DLL หลักของ Revit ไปยังโฟลเดอร์ Output เนื่องจาก Revit มีไฟล์นี้อยู่ในตัวระบบอยู่แล้ว -->
       <Private>false</Private>
     </Reference>
+    <!-- อ้างอิง UI API สำหรับการควบคุมหน้าต่างและริบบอนเมนูบนจอ -->
     <Reference Include="RevitAPIUI">
       <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
-      <!-- สำคัญมาก: ห้าม copy RevitAPIUI ลงไปโฟลเดอร์ output -->
       <Private>false</Private>
     </Reference>
   </ItemGroup>
 </Project>
 ```
+
+### 💡 เจาะลึกโครงสร้างโปรเจ็กต์
+*   **`<TargetFramework>`**: กำหนดเวอร์ชัน .NET โดย Revit 2026 จะใช้เวอร์ชันใหม่คือ **.NET 8.0**
+*   **`<Private>false</Private>`**: เป็นจุดที่มือใหม่ผิดพลาดบ่อยที่สุด! หากเปิดเป็น `true` ระบบจะก๊อปปี้ไฟล์ `RevitAPI.dll` ขนาดมหึมาไปกองไว้ที่ output ซึ่งจะสร้างความขัดแย้งเชิงหน่วยความจำในระบบ Revit (Assembly Loading Conflict) เมื่อปลั๊กอินเปิดใช้งานจริง
+
 
 ## 3. เขียน command แรก
 
@@ -52,24 +58,25 @@ using Autodesk.Revit.UI;
 
 namespace RevitToolkit;
 
-// 1. กำหนดให้รัน Transaction แบบ Manual
+// 1. [Transaction(TransactionMode.Manual)]: ประกาศว่าคลาสนี้จะรับผิดชอบควบคุม Transaction (บันทึกข้อมูล) ด้วยโค้ด C# ของเราเอง
 [Transaction(TransactionMode.Manual)]
-public class Command : IExternalCommand
+public class Command : IExternalCommand // 2. บังคับสืบทอดไอคอน IExternalCommand เพื่อระบุว่าคลาสนี้คือ "ปุ่มสั่งงาน" ของ Revit
 {
-    // 2. เมธอด Execute จะถูกเรียกอัตโนมัติเมื่อกดปุ่มบน Revit
+    // 3. เมธอด Execute: เป็น Entry Point ที่ Revit จะวิ่งมาเรียกทำงานเมื่อผู้ใช้คลิกปุ่มบนหน้าจอ
     public Result Execute(
-        ExternalCommandData commandData,
-        ref string message,
-        ElementSet elements)
+        ExternalCommandData commandData, // อ็อบเจกต์เก็บชุดข้อมูลพิกัด ข้อมูลไฟล์โปรเจ็กต์ปัจจุบัน
+        ref string message,              // ตัวแปรเก็บประวัติตัวอักษรกรณีทำงานล้มเหลว
+        ElementSet elements)             // ชุดวัตถุที่ใช้สำหรับทำไฮไลท์สีแดงเวลาเกิดข้อผิดพลาด
     {
-        // 3. แสดงหน้าต่างแจ้งเตือนง่ายๆ เพื่อทดสอบว่าปลั๊กอินทำงานได้
+        // 4. TaskDialog.Show: เรียกใช้งานหน้าต่างแสดงผลข้อความอย่างรวดเร็วของ Revit
         TaskDialog.Show("RevitToolkit", "Hello from Revit 2026");
 
-        // 4. คืนค่า Succeeded เพื่อบอก Revit ว่าคำสั่งจบสมบูรณ์
+        // 5. คืนสถานะ: บังคับส่งค่า Result กลับออกไปเพื่อบอก Revit ว่าปุ่มนี้ทำงานสมบูรณ์เรียบร้อยดี
         return Result.Succeeded;
     }
 }
 ```
+
 
 ## 4. สร้างไฟล์ `.addin`
 
