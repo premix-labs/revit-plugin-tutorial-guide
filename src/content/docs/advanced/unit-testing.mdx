@@ -1,0 +1,302 @@
+---
+title: Unit Testing สำหรับ Revit Plugin
+description: เขียนและรัน Unit Test ด้วย xUnit โดยไม่ต้องเปิด Revit ด้วย RevitTestFramework และ Moq
+---
+
+การเขียนโค้ดโดยปราศจาก Unit Test เปรียบเสมือนการสร้างตึกโดยไม่มีการตรวจสอบงาน ปลั๊กอิน Revit ที่ดีในองค์กรต้องมีชุดทดสอบที่รันได้อัตโนมัติ เพื่อป้องกันโค้ดเก่าพังเมื่อเพิ่มฟีเจอร์ใหม่ (Regression Testing) ครับ
+
+---
+
+## ความท้าทาย: ทำไม Unit Test กับ Revit ยากกว่าปกติ?
+
+```
+ปัญหา: Revit API ต้องรันอยู่ภายใน Revit.exe เท่านั้น
+        ดังนั้นการเรียก FilteredElementCollector หรือ Transaction
+        นอก Revit จะ throw Exception ทันที
+```
+
+**วิธีแก้มี 2 แนวทาง:**
+1. **RevitTestFramework** — รัน Test จริงภายใน Revit (Integration Test)
+2. **Architecture แยก Logic** + **Moq** — Mock Revit API เพื่อ Unit Test แบบเร็ว ❤️
+
+---
+
+## 1. แนวคิด: แยก Business Logic ออกจาก Revit API
+
+กุญแจสำคัญคือ **อย่าเขียน Logic ใน `Execute()` โดยตรง** ให้แยกออกมาเป็น Service Class:
+
+```
+❌ ยากทดสอบ:                     ✅ ทดสอบได้ง่าย:
+Command.Execute()                 Command.Execute()
+  └── ทุก Logic อยู่ที่นี่           └── เรียก ColumnService.NumberColumns()
+                                   ColumnService  ← Test ตรงนี้
+                                     └── Logic อยู่ที่นี่
+```
+
+```csharp title="ColumnService.cs — Business Logic ที่แยกออกมา"
+using System.Collections.Generic;
+
+namespace RevitToolkit.Services;
+
+/// <summary>
+/// Service สำหรับจัดการเลขลำดับเสา — ทดสอบได้โดยไม่ต้องใช้ Revit
+/// </summary>
+public class ColumnNumberingService
+{
+    /// <summary>
+    /// สร้างรายการรหัสเสาตามลำดับ โดยรับ List ของ (X, Y) และ prefix
+    /// </summary>
+    public List<string> GenerateMarks(List<(double X, double Y)> positions, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(prefix))
+            throw new ArgumentException("Prefix ห้ามเป็นค่าว่าง", nameof(prefix));
+
+        // เรียงพิกัดจากซ้ายไปขวา บนลงล่าง
+        var sorted = positions
+            .OrderBy(p => Math.Round(p.Y, 1))
+            .ThenBy(p => Math.Round(p.X, 1))
+            .ToList();
+
+        var marks = new List<string>();
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            marks.Add($"{prefix}{i + 1:D2}");
+        }
+        return marks;
+    }
+
+    /// <summary>
+    /// ตรวจสอบว่า Mark ซ้ำกันไหม
+    /// </summary>
+    public bool HasDuplicateMarks(IEnumerable<string> marks)
+    {
+        var list = marks.ToList();
+        return list.Count != list.Distinct().Count();
+    }
+}
+```
+
+---
+
+## 2. เขียน Unit Test ด้วย xUnit
+
+**ติดตั้ง NuGet Packages ในโปรเจ็กต์ Test:**
+```xml title="RevitToolkit.Tests.csproj"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- xUnit Test Framework -->
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+
+    <!-- อ้างอิงไปยัง Project หลัก -->
+    <ProjectReference Include="..\RevitToolkit\RevitToolkit.csproj" />
+  </ItemGroup>
+</Project>
+```
+
+```csharp title="ColumnNumberingServiceTests.cs — Unit Tests"
+using RevitToolkit.Services;
+using Xunit;
+
+namespace RevitToolkit.Tests;
+
+public class ColumnNumberingServiceTests
+{
+    private readonly ColumnNumberingService _service = new();
+
+    [Fact]
+    public void GenerateMarks_ShouldReturnCorrectCount()
+    {
+        // Arrange: เตรียมข้อมูล Input
+        var positions = new List<(double X, double Y)>
+        {
+            (0, 0), (5, 0), (10, 0) // เสา 3 ต้นแนวนอน
+        };
+
+        // Act: รัน Logic ที่ต้องการทดสอบ
+        var marks = _service.GenerateMarks(positions, "C-");
+
+        // Assert: ตรวจสอบผลลัพธ์
+        Assert.Equal(3, marks.Count);
+    }
+
+    [Fact]
+    public void GenerateMarks_ShouldSortLeftToRight()
+    {
+        // เสาที่พิกัด X=10 ควรได้รหัสหลัง X=0
+        var positions = new List<(double X, double Y)>
+        {
+            (10, 0), (0, 0), (5, 0) // สลับลำดับโดยตั้งใจ
+        };
+
+        var marks = _service.GenerateMarks(positions, "C-");
+
+        // X=0 ควรได้ C-01 (ซ้ายสุด)
+        // X=5 ควรได้ C-02
+        // X=10 ควรได้ C-03 (ขวาสุด)
+        Assert.Equal("C-01", marks[0]);
+        Assert.Equal("C-02", marks[1]);
+        Assert.Equal("C-03", marks[2]);
+    }
+
+    [Fact]
+    public void GenerateMarks_ShouldThrow_WhenPrefixIsEmpty()
+    {
+        var positions = new List<(double X, double Y)> { (0, 0) };
+
+        // Assert: คาดว่าจะ throw ArgumentException
+        Assert.Throws<ArgumentException>(() =>
+            _service.GenerateMarks(positions, "")
+        );
+    }
+
+    [Theory]
+    [InlineData("C-", 1,  "C-01")]
+    [InlineData("COL-", 5, "COL-05")]
+    [InlineData("ST-", 10, "ST-10")]
+    public void GenerateMarks_ShouldFormat_WithCorrectPrefix(
+        string prefix, int count, string expectedLast)
+    {
+        var positions = Enumerable.Range(0, count)
+            .Select(i => ((double)i, 0.0))
+            .ToList();
+
+        var marks = _service.GenerateMarks(positions, prefix);
+
+        Assert.Equal(expectedLast, marks.Last());
+    }
+
+    [Fact]
+    public void HasDuplicateMarks_ShouldDetect_WhenDuplicatesExist()
+    {
+        var marksWithDuplicates = new[] { "C-01", "C-02", "C-01" }; // C-01 ซ้ำ
+
+        bool result = _service.HasDuplicateMarks(marksWithDuplicates);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void HasDuplicateMarks_ShouldReturnFalse_WhenNoDuplicates()
+    {
+        var uniqueMarks = new[] { "C-01", "C-02", "C-03" };
+
+        bool result = _service.HasDuplicateMarks(uniqueMarks);
+
+        Assert.False(result);
+    }
+}
+```
+
+---
+
+## 3. รัน Test ใน Visual Studio
+
+```bash
+# รัน Test ทั้งหมดผ่าน Terminal
+dotnet test
+
+# รัน Test เฉพาะ Class
+dotnet test --filter "FullyQualifiedName~ColumnNumberingServiceTests"
+
+# รัน Test พร้อมดูผลรายละเอียด
+dotnet test -v normal
+```
+
+**หรือใน Visual Studio:**
+1. เปิดเมนู `Test` → `Run All Tests` (Ctrl+R, A)
+2. ดูผลใน **Test Explorer** (View → Test Explorer)
+
+---
+
+## 4. Moq — Mock Revit Object สำหรับ Integration-level Test
+
+สำหรับโค้ดที่ต้อง Interface กับ Revit API เราใช้ **Moq** เพื่อสร้างวัตถุจำลอง:
+
+```xml
+<PackageReference Include="Moq" Version="4.20.72" />
+```
+
+```csharp title="ตัวอย่าง — Mock Parameter และทดสอบ WriteService"
+using Moq;
+using Autodesk.Revit.DB;
+using Xunit;
+
+namespace RevitToolkit.Tests;
+
+public class ParameterWriterTests
+{
+    [Fact]
+    public void WriteMarkToParameter_ShouldCallSet_WhenNotReadOnly()
+    {
+        // Arrange: สร้าง Mock Parameter
+        var mockParam = new Mock<Parameter>();
+        mockParam.Setup(p => p.IsReadOnly).Returns(false);
+        mockParam.Setup(p => p.Set(It.IsAny<string>())).Returns(true);
+
+        // Act
+        bool success = WriteMarkToParameter(mockParam.Object, "C-01");
+
+        // Assert
+        Assert.True(success);
+        mockParam.Verify(p => p.Set("C-01"), Times.Once); // ตรวจว่า Set() ถูกเรียก 1 ครั้ง
+    }
+
+    private bool WriteMarkToParameter(Parameter param, string value)
+    {
+        if (param == null || param.IsReadOnly) return false;
+        param.Set(value);
+        return true;
+    }
+}
+```
+
+---
+
+## 5. RevitTestFramework — Integration Test ใน Revit จริง
+
+สำหรับการทดสอบที่ต้องใช้ `FilteredElementCollector`, `Transaction` จริงๆ ให้ใช้ **RevitTestFramework**:
+
+```bash
+# ติดตั้งผ่าน NuGet
+Install-Package RevitTestFramework
+```
+
+```csharp title="RevitIntegrationTest.cs"
+using RTF.Framework;
+using Xunit;
+
+namespace RevitToolkit.IntegrationTests;
+
+[TestFixture]
+public class FilterCollectorTests
+{
+    // [Test] จะถูกรัน ภายใน Revit จริง
+    [Test]
+    public void FilteredElementCollector_ShouldFindColumns()
+    {
+        // ต้องมีไฟล์ .rvt ที่มีเสาอยู่แล้วเพื่อทดสอบ
+        Document doc = RevitTestExecutive.CommandData.Application.ActiveUIDocument.Document;
+
+        var columns = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        Assert.True(columns.Count > 0, "ควรพบเสาในโมเดลทดสอบ");
+    }
+}
+```
+
+:::tip[แนวทางที่แนะนำ]
+สำหรับมือใหม่ให้เริ่มด้วย **แนวทางที่ 2 (แยก Service + xUnit)** ก่อน เพราะง่ายกว่ามากและรันได้เร็ว ใช้ RevitTestFramework เมื่อต้องการทดสอบ Integration จริงๆ เท่านั้น
+:::

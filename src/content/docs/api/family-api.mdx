@@ -1,0 +1,343 @@
+---
+title: Family, Type และการวางวัตถุ (Family API)
+description: เรียนรู้ความสัมพันธ์ระหว่าง Family, FamilySymbol และ FamilyInstance รวมถึงการวางวัตถุลงโมเดล Revit ด้วยโค้ด
+---
+
+นี่คือหัวใจสำคัญที่ทำให้ปลั๊กอินของคุณเปลี่ยนจาก **"แค่อ่านข้อมูล"** ไปสู่ **"สร้างของใหม่ลงในโมเดลได้"** ครับ! งาน BIM Automation ระดับโปรแทบทุกชิ้น (Auto-layout, Auto-place Equipment) ล้วนต้องใช้ Family API ทั้งสิ้น
+
+---
+
+## 1. โครงสร้าง 3 ชั้นของ Family
+
+Revit แยกข้อมูลของ "ชิ้นส่วน" ออกเป็น 3 ระดับ เพื่อประหยัดหน่วยความจำและรองรับการแก้ไขแบบ Type-based:
+
+```
+Family (แม่แบบ)
+  └── FamilySymbol (ประเภท/ขนาด)
+        └── FamilyInstance (ชิ้นที่วางจริงในโมเดล)
+```
+
+**ตัวอย่างชีวิตจริง:**
+
+| ระดับ | Class | ตัวอย่าง |
+|---|---|---|
+| **Family** | `Family` | "เสาโครงสร้างคอนกรีต" (ไฟล์ `.rfa`) |
+| **FamilySymbol** | `FamilySymbol` | ขนาด "300x300mm", "400x400mm", "500x600mm" |
+| **FamilyInstance** | `FamilyInstance` | เสา 300x300 ที่วางตรงตำแหน่ง X=5m, Y=3m |
+
+---
+
+## 2. ค้นหา `FamilySymbol` ในโปรเจ็กต์
+
+```csharp title="Command.cs — ค้นหาและแสดงรายการ FamilySymbol ของเสา"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+using System.Linq;
+using System.Text;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ListFamilyTypesCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // ดึง FamilySymbol ทั้งหมดของหมวด Structural Columns
+        // สังเกตว่าใช้ WhereElementIsElementType() (ไม่ใช่ IsNotElementType) เพราะเราต้องการ "ประเภท" ไม่ใช่ "ชิ้นวัตถุ"
+        var columnSymbols = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsElementType()                           // ← กรองเอาเฉพาะ Type
+            .Cast<FamilySymbol>()
+            .ToList();
+
+        if (!columnSymbols.Any())
+        {
+            TaskDialog.Show("ผลลัพธ์", "ไม่พบประเภทเสาโครงสร้างที่โหลดไว้ในโปรเจ็กต์นี้");
+            return Result.Succeeded;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"พบ FamilySymbol เสาทั้งหมด {columnSymbols.Count} ประเภท:\n");
+
+        foreach (FamilySymbol symbol in columnSymbols)
+        {
+            // Family.Name = ชื่อ Family หลัก
+            // symbol.Name = ชื่อ Type ย่อย
+            sb.AppendLine($"  [{symbol.Family.Name}] → {symbol.Name}");
+            sb.AppendLine($"     ID: {symbol.Id.Value}");
+        }
+
+        TaskDialog.Show("รายการ Family Type", sb.ToString());
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 3. วางวัตถุลงโมเดล — `NewFamilyInstance()`
+
+:::warning[บังคับ: ต้อง Activate() ก่อนวาง]
+ก่อนเรียก `NewFamilyInstance()` ทุกครั้ง คุณต้อง **เรียก `symbol.Activate()`** ก่อนเสมอ มิฉะนั้น Revit จะขึ้น Exception ว่า Symbol ยังไม่พร้อมใช้งาน เพราะ Revit จะไม่โหลด Geometry ของ Symbol เข้าหน่วยความจำจนกว่าจะถูก Activate
+:::
+
+```csharp title="PlaceColumnCommand.cs — วางเสาโครงสร้างที่พิกัดกำหนด"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+using System.Linq;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class PlaceColumnCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ค้นหา FamilySymbol ที่ต้องการ (ในตัวอย่างนี้หยิบตัวแรกที่หาเจอ)
+        FamilySymbol columnSymbol = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault(s => s.Name.Contains("300")); // ค้นหา Type ที่ชื่อมี "300"
+
+        if (columnSymbol == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบประเภทเสาขนาด 300mm ในโปรเจ็กต์ กรุณาโหลด Family ก่อน");
+            return Result.Failed;
+        }
+
+        // 2. ค้นหา Level สำหรับวางเสา
+        Level level = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => l.Elevation) // เรียงตามความสูง
+            .FirstOrDefault();         // เอา Level ต่ำสุด
+
+        if (level == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบ Level ในโปรเจ็กต์ กรุณาสร้าง Level ก่อน");
+            return Result.Failed;
+        }
+
+        using (Transaction trans = new Transaction(doc, "Place Structural Columns"))
+        {
+            trans.Start();
+
+            // 3. 🔑 Activate FamilySymbol ก่อนวางเสมอ!
+            if (!columnSymbol.IsActive)
+            {
+                columnSymbol.Activate();
+                doc.Regenerate(); // บังคับให้ Revit อัปเดต Geometry หลัง Activate
+            }
+
+            // 4. กำหนดพิกัดที่ต้องการวางเสา (ตัวอย่าง: 5 จุด เรียงแถว)
+            double[] xPositionsM = { 0, 5, 10, 15, 20 }; // ระยะ 5 เมตร
+
+            foreach (double xM in xPositionsM)
+            {
+                // แปลงเมตรเป็นฟุต (หน่วยมาตรฐานของ Revit)
+                double xFt = xM / 0.3048;
+                XYZ insertPoint = new XYZ(xFt, 0, 0);
+
+                // 5. วางเสา — NewFamilyInstance สำหรับวัตถุโครงสร้าง
+                // StructuralType.Column บอก Revit ว่านี่คือ "เสา" ไม่ใช่ "เสาตกแต่ง"
+                FamilyInstance column = doc.Create.NewFamilyInstance(
+                    location:     insertPoint,
+                    symbol:       columnSymbol,
+                    level:        level,
+                    structuralType: StructuralType.Column
+                );
+            }
+
+            trans.Commit();
+        }
+
+        TaskDialog.Show("สำเร็จ", $"วางเสาเรียงแถวสำเร็จ 5 ต้น บน Level: {level.Name}");
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 4. ค้นหา Family จากชื่อและโหลดเข้าโปรเจ็กต์
+
+หากโปรเจ็กต์ยังไม่มี Family ที่ต้องการ เราสามารถโหลดจากไฟล์ `.rfa` ได้ผ่านโค้ด:
+
+```csharp title="ตัวอย่าง — ค้นหาและโหลด Family จากไฟล์"
+using (Transaction trans = new Transaction(doc, "Load Family"))
+{
+    trans.Start();
+
+    string familyPath = @"C:\ProgramData\Autodesk\RVT 2026\Libraries\Thai\Structural\Framing\Concrete\Concrete-Rectangular Beam.rfa";
+
+    // โหลด Family เข้าโปรเจ็กต์ (ถ้ามีอยู่แล้วจะไม่โหลดซ้ำ)
+    bool loaded = doc.LoadFamily(familyPath, out Family loadedFamily);
+
+    if (loaded)
+    {
+        TaskDialog.Show("โหลด Family", $"โหลด Family สำเร็จ: {loadedFamily.Name}");
+    }
+    else
+    {
+        // Family อาจมีอยู่แล้วในโปรเจ็กต์ — ค้นหาจากชื่อแทน
+        Family existingFamily = new FilteredElementCollector(doc)
+            .OfClass(typeof(Family))
+            .Cast<Family>()
+            .FirstOrDefault(f => f.Name == "Concrete-Rectangular Beam");
+    }
+
+    trans.Commit();
+}
+```
+
+---
+
+## 5. เปลี่ยน Type ของ FamilyInstance ที่มีอยู่แล้ว
+
+```csharp title="ตัวอย่าง — เปลี่ยนขนาดเสาทั้งหมดให้เป็น Type ใหม่"
+// ค้นหา Target FamilySymbol ที่ต้องการเปลี่ยนไป
+FamilySymbol targetSymbol = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_StructuralColumns)
+    .WhereElementIsElementType()
+    .Cast<FamilySymbol>()
+    .FirstOrDefault(s => s.Name == "400x400mm");
+
+if (targetSymbol == null) return Result.Failed;
+
+// ดึงเสาทั้งหมดในโมเดล
+var columns = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_StructuralColumns)
+    .WhereElementIsNotElementType()
+    .Cast<FamilyInstance>()
+    .ToList();
+
+using (Transaction trans = new Transaction(doc, "Change Column Type"))
+{
+    trans.Start();
+
+    if (!targetSymbol.IsActive)
+    {
+        targetSymbol.Activate();
+        doc.Regenerate();
+    }
+
+    foreach (FamilyInstance col in columns)
+    {
+        // เปลี่ยน Type ของ Instance โดยใช้ ChangeTypeId
+        col.ChangeTypeId(targetSymbol.Id);
+    }
+
+    trans.Commit();
+}
+TaskDialog.Show("สำเร็จ", $"เปลี่ยนขนาดเสาทั้งหมด {columns.Count} ต้น → {targetSymbol.Name}");
+```
+
+---
+
+## 6. ตัวอย่างจริง: Auto-place เสาตามตาราง Grid อัตโนมัติ
+
+```csharp title="AutoPlaceColumnsOnGrid.cs"
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class AutoPlaceColumnsOnGrid : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ดึง Grid ทั้งหมดในโมเดล
+        var grids = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_Grids)
+            .WhereElementIsNotElementType()
+            .Cast<Grid>()
+            .ToList();
+
+        // 2. แยก Grid แนวนอน (Y-direction) และแนวตั้ง (X-direction)
+        var xGrids = grids.Where(g => IsHorizontal(g)).ToList(); // แกน X
+        var yGrids = grids.Where(g => !IsHorizontal(g)).ToList(); // แกน Y
+
+        // 3. ค้นหา FamilySymbol
+        FamilySymbol symbol = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault();
+
+        Level level = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => l.Elevation)
+            .First();
+
+        if (symbol == null || level == null) return Result.Failed;
+
+        using (Transaction trans = new Transaction(doc, "Auto Place Columns on Grid Intersections"))
+        {
+            trans.Start();
+
+            if (!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
+
+            int count = 0;
+            // 4. วางเสาที่จุดตัดของ Grid ทุกจุด
+            foreach (Grid xGrid in xGrids)
+            {
+                foreach (Grid yGrid in yGrids)
+                {
+                    // หาจุดตัดระหว่าง 2 Grid
+                    XYZ intersection = FindGridIntersection(xGrid, yGrid);
+                    if (intersection == null) continue;
+
+                    doc.Create.NewFamilyInstance(
+                        intersection, symbol, level, StructuralType.Column
+                    );
+                    count++;
+                }
+            }
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", $"วางเสาที่จุดตัด Grid อัตโนมัติ {count} ต้น");
+        }
+
+        return Result.Succeeded;
+    }
+
+    private bool IsHorizontal(Grid grid)
+    {
+        if (grid.Curve is not Line line) return false;
+        XYZ dir = line.Direction;
+        return Math.Abs(dir.X) > Math.Abs(dir.Y);
+    }
+
+    private XYZ FindGridIntersection(Grid g1, Grid g2)
+    {
+        IntersectionResultArray results;
+        SetComparisonResult result = g1.Curve.Intersect(g2.Curve, out results);
+        if (result == SetComparisonResult.Overlap && results?.Size > 0)
+            return results.get_Item(0).XYZPoint;
+        return null;
+    }
+}
+```
+
+:::tip[สูตรจำง่าย Family API]
+1. `WhereElementIsElementType()` → ดึง FamilySymbol (ประเภท)
+2. `symbol.Activate()` + `doc.Regenerate()` → เปิดใช้งาน
+3. `doc.Create.NewFamilyInstance(point, symbol, level, StructuralType)` → วางวัตถุ
+:::

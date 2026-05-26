@@ -48,12 +48,45 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Geometry & Spatial API',
+					items: [
+						{ label: 'พิกัดและตำแหน่ง (XYZ & BoundingBox)', slug: 'api/geometry-api' },
+						{ label: 'รูปทรง Solid และเส้นโค้ง', slug: 'api/solid-and-curves' },
+					],
+				},
+				{
+					label: 'Family & Element Creation',
+					items: [
+						{ label: 'Family, Type & Instance API', slug: 'api/family-api' },
+					],
+				},
+				{
+					label: 'Events & Automation',
+					items: [
+						{ label: 'Events, Updaters & Hooks', slug: 'api/events-and-updaters' },
+					],
+				},
+				{
+					label: 'Views, Sheets & Annotation',
+					items: [
+						{ label: 'จัดการ Views และ Sheets', slug: 'api/views-and-sheets' },
+						{ label: 'Annotation & Tagging อัตโนมัติ', slug: 'api/annotation-api' },
+					],
+				},
+				{
 					label: 'Advanced UI & Deployment',
 					items: [
 						{ label: 'WPF UI แบบมืออาชีพ', slug: 'guides/wpf-ui' },
 						{ label: 'MVVM & Event Handler', slug: 'guides/mvvm-pattern' },
 						{ label: 'รองรับหลายเวอร์ชัน (2024-2026)', slug: 'guides/multi-version' },
 						{ label: 'ทำตัวติดตั้ง (Build Installer)', slug: 'guides/installers' },
+					],
+				},
+				{
+					label: 'Advanced Topics',
+					items: [
+						{ label: 'Unit Testing', slug: 'advanced/unit-testing' },
+						{ label: 'CI/CD Pipeline', slug: 'advanced/cicd-pipeline' },
 					],
 				},
 				{

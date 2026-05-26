@@ -1,0 +1,364 @@
+---
+title: Annotation อัตโนมัติ (Tag, Dimension & Text)
+description: สร้าง TextNote, Tag วัตถุ และ Dimension อัตโนมัติด้วย Revit API เพื่อจัดทำแบบก่อสร้างอย่างรวดเร็ว
+---
+
+Annotation คือชั้นสุดท้ายของ BIM Documentation — การเพิ่ม Tag, Dimension และข้อความลงในแบบ ซึ่งโดยปกติต้องใช้เวลาหลายชั่วโมงถ้าทำมือ แต่ด้วย Revit API เราสามารถสร้าง Annotation ทั้งแบบได้ในไม่กี่วินาทีครับ!
+
+---
+
+## 1. `TextNote` — สร้างข้อความบนแบบ
+
+`TextNote` คือกล่องข้อความที่วางอยู่บน View ใน Revit ใช้สำหรับหมายเหตุ, ชื่อแบบ, หรือคำอธิบายเพิ่มเติม
+
+```csharp title="Command.cs — สร้าง TextNote บน View"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using System.Linq;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CreateTextNoteCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+        View activeView = uidoc.ActiveView;
+
+        // 1. ค้นหา TextNoteType (รูปแบบ/ขนาดตัวอักษร)
+        TextNoteType noteType = new FilteredElementCollector(doc)
+            .OfClass(typeof(TextNoteType))
+            .Cast<TextNoteType>()
+            .FirstOrDefault(); // ใช้ TextNoteType แรกที่หาเจอ
+
+        if (noteType == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบ TextNoteType ในโปรเจ็กต์");
+            return Result.Failed;
+        }
+
+        using (Transaction trans = new Transaction(doc, "Create Text Notes"))
+        {
+            trans.Start();
+
+            // 2. กำหนดตำแหน่งและข้อความ
+            XYZ position = new XYZ(0, 0, 0); // พิกัดบน View (หน่วย: ฟุต)
+
+            // 3. สร้าง TextNoteOptions สำหรับกำหนดรูปแบบ
+            TextNoteOptions options = new TextNoteOptions(noteType.Id)
+            {
+                HorizontalAlignment = HorizontalTextAlignment.Left,
+                VerticalAlignment   = VerticalTextAlignment.Top,
+                Rotation            = 0.0, // มุมหมุน (Radian)
+            };
+
+            // 4. สร้าง TextNote (วางบน View ที่ระบุ)
+            TextNote note = TextNote.Create(
+                doc,
+                activeView.Id,
+                position,
+                "หมายเหตุ: ตรวจสอบขนาดเสาตามที่ระบุในแบบรายการ\n(โดยวิศวกรโครงสร้าง)",
+                options
+            );
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", $"สร้าง TextNote สำเร็จ ID: {note.Id.Value}");
+        }
+
+        return Result.Succeeded;
+    }
+}
+```
+
+### 🔍 API ที่ต้องรู้ใน `TextNote`
+
+| Property | คำอธิบาย |
+|---|---|
+| `note.Text` | อ่าน/แก้ไขข้อความ |
+| `note.Width` | ความกว้างกล่องข้อความ (ฟุต) |
+| `note.GetTextNoteType()` | ดึง TextNoteType ปัจจุบัน |
+| `TextNoteType.TextSize` | ขนาดตัวอักษร |
+
+---
+
+## 2. `IndependentTag` — Tag วัตถุอัตโนมัติ
+
+`IndependentTag` คือ Tag ที่โชว์ค่าพารามิเตอร์ของวัตถุโดยอัตโนมัติ (เช่น Mark, Type, Size) เมื่อสั่ง Tag แล้วค่าจะอัปเดตตามข้อมูลจริงในโมเดลตลอดเวลา
+
+```csharp title="AutoTagColumnsCommand.cs — Tag เสาทั้งหมดอัตโนมัติ"
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class AutoTagColumnsCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+        View activeView = uidoc.ActiveView;
+
+        // 1. ค้นหา TagType สำหรับเสาโครงสร้าง
+        // FamilySymbol ของ Tag อยู่ใน OST_StructuralColumnTags
+        FamilySymbol columnTagType = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumnTags)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault();
+
+        if (columnTagType == null)
+        {
+            TaskDialog.Show("Error",
+                "ไม่พบ Column Tag Type ในโปรเจ็กต์\n" +
+                "กรุณาโหลด Structural Column Tag Family ก่อน"
+            );
+            return Result.Failed;
+        }
+
+        // 2. ดึงเสาทั้งหมดที่มองเห็นใน View ปัจจุบัน
+        // ใช้ FilteredElementCollector(doc, viewId) เพื่อกรองเฉพาะที่มองเห็น
+        var visibleColumns = new FilteredElementCollector(doc, activeView.Id)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        if (!visibleColumns.Any())
+        {
+            TaskDialog.Show("ผลลัพธ์", "ไม่พบเสาที่มองเห็นใน View ปัจจุบัน");
+            return Result.Succeeded;
+        }
+
+        using (Transaction trans = new Transaction(doc, "Auto Tag Structural Columns"))
+        {
+            trans.Start();
+
+            int tagCount = 0;
+            foreach (Element column in visibleColumns)
+            {
+                // คำนวณตำแหน่งสำหรับ Tag (วางที่พิกัดเสา + เยื้องขึ้นไปเล็กน้อย)
+                XYZ tagOffset = new XYZ(0, 0, 0);
+                if (column.Location is LocationPoint lp)
+                {
+                    // เยื้อง Tag ขึ้นด้านบน 0.5 เมตร จากจุดกึ่งกลางเสา
+                    tagOffset = lp.Point + new XYZ(0, 0.5 / 0.3048, 0);
+                }
+
+                // สร้าง Reference ชี้ไปที่ Element ที่ต้องการ Tag
+                Reference columnRef = new Reference(column);
+
+                // สร้าง IndependentTag
+                // addLeader = false: ไม่ต้องมีเส้นชี้
+                IndependentTag tag = IndependentTag.Create(
+                    doc,
+                    columnTagType.Id,
+                    activeView.Id,
+                    columnRef,
+                    addLeader: false,
+                    TagOrientation.Horizontal,
+                    tagOffset
+                );
+
+                tagCount++;
+            }
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", $"Tag เสาอัตโนมัติสำเร็จ {tagCount} ต้น");
+        }
+
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 3. `Dimension` — วัดระยะอัตโนมัติ
+
+Dimension คือเส้นมาตร (เส้นบอกขนาด) ที่อ้างอิงขอบของวัตถุและแสดงระยะห่าง ซึ่ง Reference ที่ใช้ต้องได้มาจาก Geometry ของวัตถุจริงๆ
+
+:::note[ข้อกำหนดสำคัญ]
+การสร้าง `Dimension` ต้องใช้ `Options { ComputeReferences = true }` ตอนดึง Geometry เสมอ ไม่อย่างนั้นจะสร้าง Dimension ไม่ได้เพราะ Face ไม่มี Reference
+:::
+
+```csharp title="AutoDimensionCommand.cs — สร้าง Dimension ระหว่างเสา"
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class AutoDimensionCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+        View activeView = uidoc.ActiveView;
+
+        // 1. ดึงเสา 2 ต้นแรก (สำหรับสาธิตการวัดระยะระหว่างกัน)
+        var columns = new FilteredElementCollector(doc, activeView.Id)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements()
+            .Take(2)
+            .ToList();
+
+        if (columns.Count < 2)
+        {
+            TaskDialog.Show("Error", "ต้องการเสาอย่างน้อย 2 ต้น");
+            return Result.Failed;
+        }
+
+        using (Transaction trans = new Transaction(doc, "Auto Dimension Columns"))
+        {
+            trans.Start();
+
+            // 2. ดึง Reference จากจุดกึ่งกลางของเสาแต่ละต้น
+            // เพื่อนำไปสร้าง Dimension Line
+            var referenceArray = new ReferenceArray();
+            var points = new List<XYZ>();
+
+            Options geomOpts = new Options
+            {
+                ComputeReferences = true, // สำคัญมาก! ต้องใช้เสมอสำหรับ Dimension
+                View = activeView
+            };
+
+            foreach (Element col in columns)
+            {
+                if (col.Location is not LocationPoint lp) continue;
+                points.Add(lp.Point);
+
+                // สร้าง Reference จากพิกัดจุดกึ่งกลางเสา
+                GeometryElement geom = col.get_Geometry(geomOpts);
+                foreach (GeometryObject obj in geom)
+                {
+                    if (obj is GeometryInstance inst)
+                    {
+                        foreach (GeometryObject instObj in inst.GetInstanceGeometry())
+                        {
+                            if (instObj is Solid solid && solid.Volume > 0)
+                            {
+                                // เพิ่ม Reference จาก Face แรกที่หาเจอ
+                                foreach (Face face in solid.Faces)
+                                {
+                                    referenceArray.Append(face.Reference);
+                                    break; // ใช้แค่ 1 face ต่อ 1 เสา
+                                }
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (referenceArray.Size < 2)
+            {
+                trans.RollBack();
+                TaskDialog.Show("Error", "ไม่สามารถสร้าง Reference จากเสาได้");
+                return Result.Failed;
+            }
+
+            // 3. สร้างเส้น Dimension (แนวนอน วัดระยะในแกน X)
+            XYZ lineStart = points[0] + new XYZ(0, -5, 0); // เยื้องลงมา 5 ฟุต
+            XYZ lineEnd   = points[1] + new XYZ(0, -5, 0);
+            Line dimensionLine = Line.CreateBound(lineStart, lineEnd);
+
+            // 4. สร้าง Dimension
+            Dimension dim = doc.Create.NewDimension(activeView, dimensionLine, referenceArray);
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", "สร้าง Dimension ระหว่างเสาสำเร็จ");
+        }
+
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 4. ตัวอย่างจริง: Auto-annotate แบบโครงสร้างครบชุด
+
+```csharp title="AutoAnnotateSheet.cs — Tag + Dimension ทั้ง Sheet"
+[Transaction(TransactionMode.Manual)]
+public class AutoAnnotateSheet : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+        View view = uidoc.ActiveView;
+
+        FamilySymbol columnTagType = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumnTags)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault();
+
+        var columns = new FilteredElementCollector(doc, view.Id)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        using (Transaction trans = new Transaction(doc, "Auto-Annotate Structural Plan"))
+        {
+            trans.Start();
+
+            foreach (Element col in columns)
+            {
+                if (col.Location is not LocationPoint lp) continue;
+                if (columnTagType == null) continue;
+
+                // วาง Tag เยื้องขึ้นด้านบน 300mm จากจุดกึ่งกลางเสา
+                XYZ tagPos = lp.Point + new XYZ(0, 300.0 / 304.8, 0);
+
+                IndependentTag.Create(
+                    doc, columnTagType.Id, view.Id,
+                    new Reference(col), false,
+                    TagOrientation.Horizontal, tagPos
+                );
+            }
+
+            trans.Commit();
+        }
+
+        TaskDialog.Show("เสร็จสิ้น",
+            $"✅ Annotation อัตโนมัติครบชุด\n" +
+            $"  - Tags สำหรับเสา: {columns.Count} ต้น"
+        );
+
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 5. สรุป Annotation API
+
+| วัตถุประสงค์ | Class | Method สร้าง |
+|---|---|---|
+| ข้อความหมายเหตุ | `TextNote` | `TextNote.Create(doc, viewId, pos, text, options)` |
+| Tag วัตถุ | `IndependentTag` | `IndependentTag.Create(doc, tagTypeId, viewId, ref, ...)` |
+| เส้นมาตร | `Dimension` | `doc.Create.NewDimension(view, line, refArray)` |
+| ทาสีพื้นที่ | `FilledRegion` | `FilledRegion.Create(doc, typeId, viewId, loops)` |
+| ลูกศรชี้ | `DetailCurve` | `doc.Create.NewDetailCurve(view, curve)` |
+
+:::tip[สูตรจำง่าย Annotation]
+1. ดึง **TagType / TextNoteType** (ประเภทแบบอักษร/แท็ก) ก่อน
+2. กำหนด **Reference** ชี้ไปที่ Element หรือ Face ที่ต้องการ
+3. ระบุ **View** ที่จะวาง Annotation ลงไป
+4. เรียก `.Create()` ภายใน **Transaction**
+:::

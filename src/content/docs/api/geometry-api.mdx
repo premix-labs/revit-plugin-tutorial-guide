@@ -1,0 +1,312 @@
+---
+title: พิกัดและตำแหน่งในโมเดล (XYZ & Geometry API)
+description: เรียนรู้การทำงานกับพิกัด XYZ, BoundingBox, Transform และระบบตำแหน่งของวัตถุใน Revit API
+---
+
+ทุกสิ่งทุกอย่างใน Revit มีพิกัดและตำแหน่งในพื้นที่ 3 มิติ ไม่ว่าจะเป็นเสา คาน ผนัง หรือแม้แต่จุดอ้างอิงบนแบบ ก่อนที่เราจะเขียนปลั๊กอินที่ **"ทำงานกับโมเดลจริงๆ"** ได้ เราต้องเข้าใจระบบพิกัดหลังบ้านของ Revit ให้ได้ก่อนครับ!
+
+:::note[หน่วยวัดมาตรฐาน Revit]
+Revit เก็บค่าพิกัด **ทุกชนิดเป็น "ฟุต" (Feet)** เสมอ แม้ผู้ใช้จะตั้งค่าหน่วยเป็นเมตรหรือมิลลิเมตรในหน้าจอก็ตาม ดังนั้นในโค้ด C# เราจะต้องแปลงหน่วยเสมอเมื่อต้องการแสดงผลหรือรับค่าจากผู้ใช้
+:::
+
+## 1. `XYZ` — จุดพิกัดสามมิติ
+
+`XYZ` คือ Class พื้นฐานที่สุดสำหรับแทนจุดในพื้นที่ 3 มิติ และยังใช้แทน "เวกเตอร์ทิศทาง" ด้วย
+
+```csharp title="ตัวอย่างการใช้งาน XYZ"
+using Autodesk.Revit.DB;
+
+// สร้างจุดพิกัดที่ตำแหน่ง X=5m, Y=3m, Z=0m
+// จำกัดต้องแปลงจากเมตรเป็นฟุต (1 เมตร = 3.28084 ฟุต)
+double x = 5.0 / 0.3048; // หรือ * 3.28084
+double y = 3.0 / 0.3048;
+double z = 0.0;
+
+XYZ point = new XYZ(x, y, z);
+
+// ดึงค่าแต่ละแกน (ค่าที่ได้เป็น "ฟุต")
+double xInFeet = point.X;
+double yInFeet = point.Y;
+double zInFeet = point.Z;
+
+// แปลงกลับเป็นเมตรเพื่อแสดงผล
+double xInMeters = point.X * 0.3048;
+
+// คำนวณระยะห่างระหว่าง 2 จุด
+XYZ pointA = new XYZ(0, 0, 0);
+XYZ pointB = new XYZ(10, 0, 0);
+double distanceInFeet = pointA.DistanceTo(pointB);
+double distanceInMm = UnitUtils.ConvertFromInternalUnits(distanceInFeet, UnitTypeId.Millimeters);
+
+// การคำนวณเวกเตอร์
+XYZ direction = (pointB - pointA).Normalize(); // เวกเตอร์ทิศทาง ความยาว = 1
+XYZ midPoint = (pointA + pointB) * 0.5;        // จุดกึ่งกลาง
+```
+
+### 🔍 API ที่ต้องรู้ใน `XYZ`
+
+| Property / Method | ประเภท | คำอธิบาย |
+|---|---|---|
+| `.X`, `.Y`, `.Z` | `double` | พิกัดแต่ละแกน (หน่วย: ฟุต) |
+| `.DistanceTo(XYZ)` | `double` | ระยะห่างจากจุดหนึ่งไปอีกจุด |
+| `.Normalize()` | `XYZ` | แปลงเป็นเวกเตอร์ความยาว 1 |
+| `.IsZeroLength()` | `bool` | เช็กว่าเวกเตอร์มีความยาวเป็นศูนย์ไหม |
+| `XYZ.Zero` | `XYZ` | จุด Origin (0, 0, 0) |
+| `XYZ.BasisX/Y/Z` | `XYZ` | เวกเตอร์ทิศทางมาตรฐาน (1,0,0) / (0,1,0) / (0,0,1) |
+
+---
+
+## 2. `BoundingBoxXYZ` — กล่องครอบวัตถุ
+
+`BoundingBoxXYZ` คือ **"กล่องสี่เหลี่ยมที่ครอบวัตถุพอดี"** ช่วยให้เราคำนวณขนาด (กว้าง, ยาว, สูง) ของวัตถุหรือพื้นที่ได้อย่างรวดเร็ว โดยไม่ต้องวิเคราะห์รูปทรงซับซ้อน
+
+```csharp title="Command.cs — ดึง BoundingBox และคำนวณขนาดเสา"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class GetColumnSizeCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+
+        // 1. ให้ผู้ใช้คลิกเลือกวัตถุบนหน้าจอ (Reference Selection)
+        Reference pickedRef = uidoc.Selection.PickObject(
+            Autodesk.Revit.UI.Selection.ObjectType.Element,
+            "กรุณาคลิกเลือกเสาที่ต้องการวัดขนาด"
+        );
+
+        Element element = doc.GetElement(pickedRef.ElementId);
+
+        // 2. ดึงกล่องครอบวัตถุ (BoundingBox) โดยผ่าน View=null เพื่อรับขนาดจริงในโมเดล 3D
+        BoundingBoxXYZ bbox = element.get_BoundingBox(null);
+
+        if (bbox == null)
+        {
+            TaskDialog.Show("Error", "ไม่สามารถดึง BoundingBox ของวัตถุนี้ได้");
+            return Result.Failed;
+        }
+
+        // 3. คำนวณขนาดจากจุดมุม Min (ล่างซ้ายหน้า) ถึง Max (บนขวาหลัง)
+        XYZ min = bbox.Min; // มุมต่ำสุด
+        XYZ max = bbox.Max; // มุมสูงสุด
+
+        double widthFt  = max.X - min.X;
+        double depthFt  = max.Y - min.Y;
+        double heightFt = max.Z - min.Z;
+
+        // 4. แปลงหน่วยจากฟุต → มิลลิเมตร
+        double widthMm  = UnitUtils.ConvertFromInternalUnits(widthFt,  UnitTypeId.Millimeters);
+        double depthMm  = UnitUtils.ConvertFromInternalUnits(depthFt,  UnitTypeId.Millimeters);
+        double heightMm = UnitUtils.ConvertFromInternalUnits(heightFt, UnitTypeId.Millimeters);
+
+        TaskDialog.Show("ขนาดวัตถุ",
+            $"ชื่อ: {element.Name}\n" +
+            $"กว้าง:  {widthMm:F0} มม.\n" +
+            $"ลึก:    {depthMm:F0} มม.\n" +
+            $"สูง:    {heightMm:F0} มม."
+        );
+
+        return Result.Succeeded;
+    }
+}
+```
+
+### 🔍 API ที่ต้องรู้ใน `BoundingBoxXYZ`
+
+*   **`bbox.Min`** — จุดมุมพิกัดต่ำสุด (ซ้าย-หน้า-ล่าง) ของกล่องครอบ
+*   **`bbox.Max`** — จุดมุมพิกัดสูงสุด (ขวา-หลัง-บน) ของกล่องครอบ
+*   **`bbox.Transform`** — Matrix การแปลงพิกัดระบบ Local ของวัตถุนั้น (สำคัญสำหรับวัตถุที่หมุนเอียง)
+*   **`element.get_BoundingBox(view)`** — ส่ง `null` เพื่อรับขนาดจริงใน 3D, ส่ง View object เพื่อรับขนาดที่มองเห็นใน View นั้น
+
+:::tip[เคล็ดลับ BoundingBox]
+`BoundingBoxXYZ` ไม่ได้ให้ขนาดวัตถุที่แม่นยำ 100% เสมอไป เนื่องจากเป็นแค่ "กล่องสี่เหลี่ยมครอบ" หากวัตถุหมุนเอียงกล่องจะใหญ่กว่าตัวจริง สำหรับขนาดที่แม่นยำควรใช้ Parameter เช่น `INSTANCE_LENGTH_PARAM` หรือดึงจาก `Solid` แทน
+:::
+
+---
+
+## 3. `Location`, `LocationPoint` และ `LocationCurve` — ตำแหน่งของวัตถุ
+
+ทุก Element ใน Revit มี Property `.Location` ที่บอกตำแหน่งในพื้นที่ แต่มีรูปแบบแตกต่างกัน 2 ประเภทตามลักษณะวัตถุ:
+
+*   **`LocationPoint`** — วัตถุที่ตั้งอยู่ที่ **จุดเดียว** เช่น เสา, ประตู, หน้าต่าง, เครื่องสุขภัณฑ์
+*   **`LocationCurve`** — วัตถุที่มีความยาวตาม **เส้น** เช่น คาน, ผนัง, ท่อ, สายไฟ
+
+```csharp title="Command.cs — ดึงพิกัดเสาและความยาวคาน"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using System.Text;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ElementLocationCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+        var sb = new StringBuilder();
+
+        // --- กรณีที่ 1: ดึงพิกัดเสา (LocationPoint) ---
+        var columns = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        foreach (Element col in columns)
+        {
+            // ตรวจสอบว่า Location เป็นประเภท LocationPoint
+            if (col.Location is LocationPoint locPt)
+            {
+                XYZ pt = locPt.Point;
+                double xMm = UnitUtils.ConvertFromInternalUnits(pt.X, UnitTypeId.Millimeters);
+                double yMm = UnitUtils.ConvertFromInternalUnits(pt.Y, UnitTypeId.Millimeters);
+                sb.AppendLine($"เสา [{col.Name}] → X={xMm:F0}mm, Y={yMm:F0}mm");
+
+                // 💡 locPt.Rotation คือมุมหมุนของวัตถุ (หน่วย: Radian)
+                double angleDegrees = locPt.Rotation * (180.0 / Math.PI);
+                sb.AppendLine($"   มุมหมุน: {angleDegrees:F1}°");
+            }
+        }
+
+        // --- กรณีที่ 2: ดึงความยาวคาน (LocationCurve) ---
+        var beams = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralFraming)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        foreach (Element beam in beams)
+        {
+            if (beam.Location is LocationCurve locCurve)
+            {
+                Curve curve = locCurve.Curve;
+                double lengthFt = curve.Length;
+                double lengthMm = UnitUtils.ConvertFromInternalUnits(lengthFt, UnitTypeId.Millimeters);
+
+                // จุดเริ่มต้นและสิ้นสุดของคาน
+                XYZ startPt = curve.GetEndPoint(0); // 0 = จุดเริ่ม
+                XYZ endPt   = curve.GetEndPoint(1); // 1 = จุดสิ้นสุด
+
+                sb.AppendLine($"คาน [{beam.Name}] → ยาว {lengthMm:F0}mm");
+            }
+        }
+
+        TaskDialog.Show("พิกัดวัตถุ", sb.ToString());
+        return Result.Succeeded;
+    }
+}
+```
+
+### 🔍 API เปรียบเทียบ LocationPoint vs LocationCurve
+
+| สิ่งที่ต้องการ | LocationPoint | LocationCurve |
+|---|---|---|
+| **ดึงพิกัด** | `locPt.Point` → `XYZ` | `locCurve.Curve.GetEndPoint(0)` |
+| **มุมหมุน** | `locPt.Rotation` (Radian) | `—` |
+| **ความยาว** | `—` | `locCurve.Curve.Length` (ฟุต) |
+| **ย้ายตำแหน่ง** | `locPt.Point = newXYZ` | `locCurve.Curve = newCurve` |
+| **วัตถุที่ใช้** | เสา, ประตู, หน้าต่าง | คาน, ผนัง, ท่อ |
+
+---
+
+## 4. `Transform` — ระบบพิกัด Local vs Global
+
+`Transform` คือ Matrix 4×4 ที่บันทึกความสัมพันธ์ระหว่างพิกัด **Local** (ระบบพิกัดของวัตถุ) กับพิกัด **Global** (ระบบพิกัดโมเดลโดยรวม) สำคัญมากเมื่อทำงานกับ Family ที่หมุนเอียง
+
+```csharp title="ตัวอย่าง Transform — แปลงพิกัด Local → Global"
+// สมมติเราอยากรู้ว่ามุมล่างซ้ายของวัตถุที่หมุน 45° อยู่ที่พิกัดโลกไหน
+BoundingBoxXYZ bbox = element.get_BoundingBox(null);
+
+// bbox.Transform คือการแปลงจาก Local Space ของวัตถุ → World Space
+Transform transform = bbox.Transform;
+
+// แปลงจุด Min (ในระบบ Local) ไปเป็นพิกัด Global
+XYZ minInWorldSpace = transform.OfPoint(bbox.Min);
+XYZ maxInWorldSpace = transform.OfPoint(bbox.Max);
+
+// แปลงเวกเตอร์ทิศทาง (ไม่ใช่จุด) จาก Local → Global
+XYZ localDirection = XYZ.BasisX; // ทิศ X ใน Local Space
+XYZ worldDirection = transform.OfVector(localDirection);
+```
+
+:::warning[ข้อควรระวัง Transform]
+หากวัตถุมีการหมุนเอียง ค่า `bbox.Min.X - bbox.Max.X` **จะให้ขนาดที่ใหญ่กว่าความเป็นจริง** เพราะกล่องครอบจะขยายพอดีกับวัตถุที่เอียง ควรใช้ `Transform` เพื่อแปลงพิกัดให้ถูกต้องก่อนคำนวณ
+:::
+
+---
+
+## 5. ตัวอย่างจริง: สแกนเสาทั้งโปรเจ็กต์ → ส่งออกพิกัดเป็น CSV
+
+```csharp title="ColumnCoordinateExporter.cs"
+using System;
+using System.IO;
+using System.Text;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ColumnCoordinateExporter : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        var columns = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        var csv = new StringBuilder();
+        csv.AppendLine("\uFEFFMark,Type,X (mm),Y (mm),Z Bottom (mm),Z Top (mm),Height (mm)");
+
+        foreach (Element col in columns)
+        {
+            string mark = col.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString() ?? "-";
+            string typeName = col.Name;
+
+            // ดึงพิกัดจาก LocationPoint
+            string xStr = "N/A", yStr = "N/A";
+            if (col.Location is LocationPoint lp)
+            {
+                xStr = UnitUtils.ConvertFromInternalUnits(lp.Point.X, UnitTypeId.Millimeters).ToString("F0");
+                yStr = UnitUtils.ConvertFromInternalUnits(lp.Point.Y, UnitTypeId.Millimeters).ToString("F0");
+            }
+
+            // ดึงความสูงจาก BoundingBox
+            string zBot = "N/A", zTop = "N/A", heightStr = "N/A";
+            BoundingBoxXYZ bbox = col.get_BoundingBox(null);
+            if (bbox != null)
+            {
+                double zBotMm  = UnitUtils.ConvertFromInternalUnits(bbox.Min.Z, UnitTypeId.Millimeters);
+                double zTopMm  = UnitUtils.ConvertFromInternalUnits(bbox.Max.Z, UnitTypeId.Millimeters);
+                double heightMm = zTopMm - zBotMm;
+                zBot = zBotMm.ToString("F0");
+                zTop = zTopMm.ToString("F0");
+                heightStr = heightMm.ToString("F0");
+            }
+
+            csv.AppendLine($"{mark},{typeName},{xStr},{yStr},{zBot},{zTop},{heightStr}");
+        }
+
+        string filePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            "Column_Coordinates.csv"
+        );
+        File.WriteAllText(filePath, csv.ToString(), Encoding.UTF8);
+
+        TaskDialog.Show("สำเร็จ", $"ส่งออกพิกัดเสา {columns.Count} ต้น → {filePath}");
+        return Result.Succeeded;
+    }
+}
+```
+
+ในบทถัดไป เราจะไปลงลึกกับ **รูปทรง Solid, Face และเส้นโค้ง (Curve)** ที่ช่วยให้เราวิเคราะห์รูปร่างจริงของวัตถุในโมเดลได้ครับ!

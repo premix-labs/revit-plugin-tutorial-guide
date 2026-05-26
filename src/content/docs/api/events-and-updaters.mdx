@@ -1,0 +1,275 @@
+---
+title: Events, Updaters และ Automation Hooks
+description: เรียนรู้การดักฟัง Event ของ Revit เพื่อสร้าง Auto-tool ที่ทำงานอัตโนมัติเมื่อผู้ใช้เปิดไฟล์, บันทึก หรือวางวัตถุใหม่
+---
+
+จนถึงตอนนี้ปลั๊กอินของเราต้องรอให้ผู้ใช้ **"กดปุ่ม"** ก่อนถึงจะทำงาน แต่ปลั๊กอินระดับองค์กรจริงๆ มักจะต้องทำงาน **"อัตโนมัติ"** เช่น กำหนดหมายเลขเสาทันทีที่ถูกวาง หรือ Export ข้อมูลอัตโนมัติทุกครั้งที่บันทึกไฟล์ — นั่นคือจุดประสงค์ของ **Revit Events** ครับ!
+
+---
+
+## แนวคิดหลัก: Revit Event System
+
+Revit มีระบบส่งสัญญาณอัตโนมัติ (Event System) ที่คอยส่ง "ข่าวสาร" ออกมาเมื่อสิ่งต่างๆ เกิดขึ้นในโปรแกรม ปลั๊กอินของเราสามารถ **"สมัครสมาชิก"** รับสัญญาณเหล่านี้และรันโค้ดตอบสนองได้ทันที
+
+```
+Revit → [Event: DocumentOpened]   → ปลั๊กอินของเรารับสัญญาณ → รันโค้ด
+Revit → [Event: DocumentSaving]   → ปลั๊กอินของเรารับสัญญาณ → รันโค้ด
+Revit → [Event: ElementAdded]     → ปลั๊กอินของเรารับสัญญาณ → รันโค้ด
+```
+
+:::note[Events ต้องลงทะเบียนใน IExternalApplication]
+Events ทั้งหมดต้องถูก Subscribe ใน `OnStartup` ของ `IExternalApplication` (`App.cs`) เพราะต้องทำงาน **ตลอดอายุการเปิดโปรแกรม** ไม่ใช่แค่ตอนกดปุ่ม
+:::
+
+---
+
+## 1. DocumentOpened — รันโค้ดเมื่อเปิดไฟล์
+
+```csharp title="App.cs — Subscribe to DocumentOpened Event"
+using Autodesk.Revit.ApplicationServices;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+public class App : IExternalApplication
+{
+    public Result OnStartup(UIControlledApplication application)
+    {
+        // 🔔 ลงทะเบียนรับสัญญาณ: "แจ้งเมื่อผู้ใช้เปิดไฟล์ .rvt ใด"
+        application.ControlledApplication.DocumentOpened += OnDocumentOpened;
+
+        // 🔔 ลงทะเบียนรับสัญญาณ: "แจ้งก่อนที่ผู้ใช้จะบันทึกไฟล์"
+        application.ControlledApplication.DocumentSaving += OnDocumentSaving;
+
+        // วาด Ribbon ตามปกติ...
+        return Result.Succeeded;
+    }
+
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        // ⚠️ สำคัญมาก: ต้องยกเลิก Subscription ทุกตัวตอนปิดโปรแกรม
+        // เพื่อป้องกันหน่วยความจำรั่ว (Memory Leak)
+        application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
+        application.ControlledApplication.DocumentSaving -= OnDocumentSaving;
+
+        return Result.Succeeded;
+    }
+
+    // ฟังก์ชันนี้จะถูกเรียกอัตโนมัติทุกครั้งที่มีการเปิดไฟล์ .rvt
+    private void OnDocumentOpened(object sender, DocumentOpenedEventArgs e)
+    {
+        Document doc = e.Document;
+
+        // ตรวจว่าเป็นไฟล์โปรเจ็กต์จริง (ไม่ใช่ Family หรือ Template)
+        if (doc.IsFamilyDocument) return;
+
+        // ตัวอย่าง: แจ้งเตือนผู้ใช้เมื่อเปิดไฟล์ที่ชื่อขึ้นต้นด้วย "TEST"
+        if (doc.Title.StartsWith("TEST", StringComparison.OrdinalIgnoreCase))
+        {
+            TaskDialog.Show(
+                "RevitToolkit - คำเตือน",
+                $"⚠️ คุณกำลังเปิดไฟล์ทดสอบ: {doc.Title}\n" +
+                "กรุณาอย่าบันทึก Overwrite ไฟล์จริง!"
+            );
+        }
+    }
+
+    // ฟังก์ชันนี้จะถูกเรียกอัตโนมัติก่อนที่ผู้ใช้จะ Save ทุกครั้ง
+    private void OnDocumentSaving(object sender, DocumentSavingEventArgs e)
+    {
+        Document doc = e.Document;
+
+        // ตัวอย่าง: บันทึก Log เวลาที่ Save พร้อมชื่อไฟล์
+        string logMessage = $"[{DateTime.Now:HH:mm:ss}] บันทึก: {doc.Title}";
+        System.IO.File.AppendAllText(
+            @"C:\Temp\RevitSaveLog.txt",
+            logMessage + Environment.NewLine
+        );
+    }
+}
+```
+
+---
+
+## 2. UIApplication.Idling — รันงานขณะ Revit ว่าง
+
+`Idling` Event จะถูกยิงซ้ำๆ ตลอดเวลาที่ Revit ไม่มีงานทำ เหมาะสำหรับงานที่ต้องการ **ประมวลผลในพื้นหลัง** หรือ **ตรวจสอบสถานะ** เป็นระยะ
+
+```csharp title="App.cs — Idling Event สำหรับงานพื้นหลัง"
+public class App : IExternalApplication
+{
+    private int _idleCount = 0;
+
+    public Result OnStartup(UIControlledApplication application)
+    {
+        application.Idling += OnIdling;
+        return Result.Succeeded;
+    }
+
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        application.Idling -= OnIdling;
+        return Result.Succeeded;
+    }
+
+    private void OnIdling(object sender, Autodesk.Revit.UI.Events.IdlingEventArgs e)
+    {
+        _idleCount++;
+
+        // เรียกทุก 100 ครั้ง (ประมาณ ~10 วินาที) เพื่อไม่ให้ Revit หนักเกินไป
+        if (_idleCount % 100 != 0) return;
+
+        UIApplication uiApp = sender as UIApplication;
+        Document doc = uiApp?.ActiveUIDocument?.Document;
+        if (doc == null) return;
+
+        // ตัวอย่าง: ตรวจสอบว่ามีเสาที่ยังไม่มี Mark หรือไม่
+        var unmarkedColumns = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .Where(col =>
+            {
+                var mark = col.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString();
+                return string.IsNullOrWhiteSpace(mark);
+            })
+            .ToList();
+
+        if (unmarkedColumns.Any())
+        {
+            // แจ้งเตือนที่ Status Bar แทน TaskDialog เพื่อไม่รบกวนการทำงาน
+            uiApp.ActiveUIDocument?.Application?.WriteJournalComment(
+                $"RevitToolkit: พบเสาที่ยังไม่มี Mark {unmarkedColumns.Count} ต้น",
+                false
+            );
+        }
+    }
+}
+```
+
+---
+
+## 3. `IUpdater` — React อัตโนมัติเมื่อ Element เปลี่ยนแปลง
+
+`IUpdater` คือระบบขั้นสูงที่ให้ปลั๊กอินของเรา **"ตอบสนองทันที"** ต่อการเปลี่ยนแปลงภายใน Transaction เช่น เมื่อผู้ใช้วางเสาใหม่ → ระบบกำหนดเลข Mark ให้อัตโนมัติ
+
+```csharp title="ColumnAutoMarker.cs — IUpdater กำหนด Mark อัตโนมัติ"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using System.Linq;
+
+namespace RevitToolkit;
+
+/// <summary>
+/// Updater ที่คอยจับตาดูเสาโครงสร้าง
+/// เมื่อมีเสาถูกเพิ่มเข้ามา จะกำหนด Mark เรียงลำดับให้อัตโนมัติ
+/// </summary>
+public class ColumnAutoMarkUpdater : IUpdater
+{
+    // 1. UpdaterId คือ ID เฉพาะตัวของ Updater นี้ (ต้องไม่ซ้ำกับของคนอื่น)
+    private static readonly UpdaterId _updaterId = new UpdaterId(
+        new AddInId(new Guid("E8AD8FD2-04D9-4A3A-A8B6-C93CB6C7C489")), // Add-In GUID
+        new Guid("11111111-2222-3333-4444-555555555555")                 // Updater GUID
+    );
+
+    // 2. Execute ถูกเรียกอัตโนมัติเมื่อมี Element ที่เราลงทะเบียนไว้เปลี่ยนแปลง
+    public void Execute(UpdaterData data)
+    {
+        Document doc = data.GetDocument();
+
+        // ดึงรายการ ElementId ที่ถูกเพิ่มใหม่ใน Transaction นี้
+        var addedIds = data.GetAddedElementIds();
+
+        // คำนวณเลข Mark ตัวถัดไป (นับจากเสาที่มีอยู่แล้วทั้งหมด)
+        int existingCount = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_StructuralColumns)
+            .WhereElementIsNotElementType()
+            .GetElementCount();
+
+        int counter = existingCount - addedIds.Count + 1;
+
+        foreach (ElementId id in addedIds)
+        {
+            Element newColumn = doc.GetElement(id);
+            if (newColumn == null) continue;
+
+            Parameter markParam = newColumn.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+            if (markParam != null && !markParam.IsReadOnly)
+            {
+                markParam.Set($"C-{counter:D2}"); // เช่น C-01, C-02, ...
+                counter++;
+            }
+        }
+    }
+
+    // 3. Metadata ของ Updater
+    public UpdaterId GetUpdaterId() => _updaterId;
+    public ChangePriority GetChangePriority() => ChangePriority.Structure;
+    public string GetUpdaterName() => "Column Auto Mark Updater";
+    public string GetAdditionalInformation() => "กำหนดรหัส Mark เสาโดยอัตโนมัติเมื่อวางเสาใหม่";
+}
+```
+
+### ลงทะเบียน IUpdater ใน App.cs
+
+```csharp title="App.cs — ลงทะเบียนและยกเลิก Updater"
+public class App : IExternalApplication
+{
+    private ColumnAutoMarkUpdater _columnUpdater;
+
+    public Result OnStartup(UIControlledApplication application)
+    {
+        // 1. สร้าง Updater Instance
+        _columnUpdater = new ColumnAutoMarkUpdater();
+
+        // 2. ลงทะเบียน Updater กับ Revit Application
+        UpdaterRegistry.RegisterUpdater(_columnUpdater, isOptional: true);
+
+        // 3. กำหนดว่า Updater จะ Execute เมื่อไหร่:
+        //    ตรงนี้ = เมื่อมี Element ในหมวด OST_StructuralColumns ถูกเพิ่มใหม่
+        UpdaterRegistry.AddTrigger(
+            _columnUpdater.GetUpdaterId(),
+            new ElementCategoryFilter(BuiltInCategory.OST_StructuralColumns),
+            Element.GetChangeTypeElementAddition() // Trigger: เมื่อ Element ถูก Add
+        );
+
+        return Result.Succeeded;
+    }
+
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        // 4. ยกเลิกการลงทะเบียน Updater ตอนปิด Revit
+        UpdaterRegistry.UnregisterUpdater(_columnUpdater.GetUpdaterId());
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 4. ChangeType ที่ใช้บ่อย
+
+| ChangeType | ความหมาย | ใช้กับ |
+|---|---|---|
+| `Element.GetChangeTypeElementAddition()` | Element ถูกเพิ่มใหม่ | Auto-Mark, Auto-Tag |
+| `Element.GetChangeTypeElementDeletion()` | Element ถูกลบ | Clean-up, Warning |
+| `Element.GetChangeTypeAny()` | การเปลี่ยนแปลงใดๆ | Sync, Validate |
+| `Element.GetChangeTypeParameter(param)` | Parameter เฉพาะถูกแก้ไข | Dependent Calc |
+
+:::warning[IUpdater ทำงานภายใน Transaction]
+`IUpdater.Execute()` รันอยู่ภายในช่วง Transaction เดียวกับที่ผู้ใช้กำลังแก้ไข ดังนั้น **ห้าม** เปิด Transaction ใหม่ซ้อนข้างใน Execute เด็ดขาด (จะเกิด Exception ทันที) และควรเขียนโค้ดให้เร็วที่สุดเพื่อไม่ให้ Revit ค้าง
+:::
+
+---
+
+## 5. สรุปเปรียบเทียบ Event vs IUpdater
+
+| คุณสมบัติ | Application Events | IUpdater |
+|---|---|---|
+| **จังหวะเวลา** | ก่อน/หลัง Action ใหญ่ (Save, Open) | ระหว่าง Transaction |
+| **ความละเอียด** | ระดับ Document | ระดับ Element |
+| **ตัวอย่าง** | แจ้งเตือนเมื่อเปิดไฟล์ | กำหนด Mark เมื่อวางเสา |
+| **ความซับซ้อน** | ต่ำ | สูง |
+| **ประสิทธิภาพ** | ดี | ต้องระมัดระวัง |

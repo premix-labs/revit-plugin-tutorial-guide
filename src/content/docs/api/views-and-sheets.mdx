@@ -1,0 +1,349 @@
+---
+title: จัดการ Views และ Sheets อัตโนมัติ
+description: เรียนรู้การสร้าง Floor Plan Views, Sections, 3D Views และ Sheets พร้อมวาง Viewport ด้วยโค้ด Revit API
+---
+
+การสร้าง Views และ Sheets อัตโนมัติเป็นหนึ่งในงาน BIM Automation ที่มีคุณค่าสูงมากในองค์กร เนื่องจากการจัดทำชุดแบบก่อสร้างสำหรับอาคารหลายชั้นต้องใช้เวลาหลายชั่วโมงถ้าทำมือ แต่ด้วยโค้ด 50 บรรทัด เราสามารถสร้างแบบครบทุกชั้นได้ในไม่กี่วินาที!
+
+---
+
+## 1. ประเภทของ View ใน Revit API
+
+| Class | ประเภทแบบ | ใช้สร้าง |
+|---|---|---|
+| `ViewPlan` | Floor Plan, Ceiling Plan | แบบผัง |
+| `ViewSection` | Section, Elevation | แบบตัด/ด้าน |
+| `View3D` | 3D View, Camera View | มุมมอง 3D |
+| `ViewSheet` | Sheet (แผ่นแบบ) | กระดาษแบบ |
+| `ViewDrafting` | Drafting View | รายละเอียดเพิ่มเติม |
+
+---
+
+## 2. สร้าง Floor Plan View อัตโนมัติ
+
+```csharp title="Command.cs — สร้าง Floor Plan สำหรับทุก Level"
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CreateFloorPlansCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ดึง ViewFamilyType สำหรับ Floor Plan
+        // ViewFamilyType คือ "แม่แบบประเภท View" เช่น Floor Plan, Structural Plan
+        ViewFamilyType floorPlanType = new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewFamilyType))
+            .Cast<ViewFamilyType>()
+            .FirstOrDefault(vft => vft.ViewFamily == ViewFamily.FloorPlan);
+
+        if (floorPlanType == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบ ViewFamilyType สำหรับ Floor Plan");
+            return Result.Failed;
+        }
+
+        // 2. ดึง Level ทั้งหมด เรียงจากล่างขึ้นบน
+        var levels = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => l.Elevation)
+            .ToList();
+
+        using (Transaction trans = new Transaction(doc, "Create Floor Plans for All Levels"))
+        {
+            trans.Start();
+
+            int createdCount = 0;
+            foreach (Level level in levels)
+            {
+                // ตรวจสอบว่ามี View Plan สำหรับ Level นี้อยู่แล้วหรือยัง
+                bool exists = new FilteredElementCollector(doc)
+                    .OfClass(typeof(ViewPlan))
+                    .Cast<ViewPlan>()
+                    .Any(vp => vp.GenLevel?.Id == level.Id);
+
+                if (exists) continue; // ข้ามถ้ามีแล้ว
+
+                // 3. สร้าง ViewPlan ใหม่สำหรับ Level นี้
+                // ViewPlan.Create(doc, viewFamilyTypeId, levelId)
+                ViewPlan newPlan = ViewPlan.Create(doc, floorPlanType.Id, level.Id);
+
+                // 4. ตั้งชื่อ View ตาม Level
+                newPlan.Name = $"FP - {level.Name}";
+
+                // 5. ปรับ Scale แบบ (1:100)
+                newPlan.Scale = 100;
+
+                createdCount++;
+            }
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", $"สร้าง Floor Plan อัตโนมัติ {createdCount} แผ่น\n(ข้าม {levels.Count - createdCount} Level ที่มีแล้ว)");
+        }
+
+        return Result.Succeeded;
+    }
+}
+```
+
+---
+
+## 3. สร้าง Section View อัตโนมัติ
+
+```csharp title="ตัวอย่าง — สร้าง Section ตัดผ่านกลางอาคาร"
+using (Transaction trans = new Transaction(doc, "Create Section"))
+{
+    trans.Start();
+
+    // ดึง ViewFamilyType สำหรับ Section
+    ViewFamilyType sectionType = new FilteredElementCollector(doc)
+        .OfClass(typeof(ViewFamilyType))
+        .Cast<ViewFamilyType>()
+        .FirstOrDefault(vft => vft.ViewFamily == ViewFamily.Section);
+
+    // กำหนด BoundingBox ของ Section View (พื้นที่ที่จะแสดงในแบบ)
+    // Transform กำหนดทิศทางการมองของ Section
+    BoundingBoxXYZ sectionBox = new BoundingBoxXYZ();
+
+    // ทิศทาง: มองจากทิศใต้ขึ้นเหนือ (แกน X เป็นทิศตะวันออก, Z เป็นขึ้น)
+    Transform transform = Transform.Identity;
+    transform.BasisX = XYZ.BasisX;         // ทิศขวาของ Section
+    transform.BasisY = XYZ.BasisZ;         // ทิศบนของ Section
+    transform.BasisZ = XYZ.BasisY.Negate(); // ทิศมองเข้า Section
+    transform.Origin = new XYZ(0, -10, 0); // จุดเริ่มต้น
+
+    sectionBox.Transform = transform;
+
+    // กำหนดขนาดกรอบ Section (หน่วย: ฟุต)
+    double widthFt  = 50.0 / 0.3048; // 50 เมตร
+    double heightFt = 15.0 / 0.3048; // 15 เมตร
+    double depthFt  = 0.3048;        // 1 เมตร
+
+    sectionBox.Min = new XYZ(-widthFt / 2, -heightFt, -depthFt);
+    sectionBox.Max = new XYZ(widthFt / 2,  0,          depthFt);
+
+    ViewSection section = ViewSection.CreateSection(doc, sectionType.Id, sectionBox);
+    section.Name = "SECTION - A-A";
+    section.Scale = 100;
+
+    trans.Commit();
+}
+```
+
+---
+
+## 4. สร้าง Sheet และวาง View ลงไป
+
+```csharp title="CreateSheetsCommand.cs — สร้าง Sheet + วาง View"
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CreateSheetsCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ค้นหา Title Block (กรอบแบบ) สำหรับ Sheet
+        // FamilySymbol ของ Title Block อยู่ใน OST_TitleBlocks
+        FamilySymbol titleBlock = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault(); // ใช้ Title Block ตัวแรกที่หาเจอ
+
+        if (titleBlock == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบ Title Block ในโปรเจ็กต์ กรุณาโหลด Title Block Family ก่อน");
+            return Result.Failed;
+        }
+
+        // 2. ดึง View Plan ที่สร้างไว้แล้วทั้งหมด (ที่ยังไม่ได้วางบน Sheet)
+        var viewPlans = new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewPlan))
+            .Cast<ViewPlan>()
+            .Where(vp => !vp.IsTemplate && vp.Name.StartsWith("FP -")) // เฉพาะที่เราสร้าง
+            .Where(vp => !Viewport.CanAddViewToSheet(doc, ElementId.InvalidElementId, vp.Id) == false) // ยังไม่ได้วาง
+            .OrderBy(vp => vp.Name)
+            .ToList();
+
+        using (Transaction trans = new Transaction(doc, "Create Sheets with Views"))
+        {
+            trans.Start();
+
+            int sheetNumber = 1;
+            foreach (ViewPlan viewPlan in viewPlans)
+            {
+                // 3. สร้าง Sheet ใหม่
+                // ViewSheet.Create(doc, titleBlockTypeId)
+                ViewSheet newSheet = ViewSheet.Create(doc, titleBlock.Id);
+
+                // 4. กำหนดเลขที่แบบและชื่อแบบ
+                newSheet.SheetNumber = $"A-{sheetNumber:D3}"; // เช่น A-001
+                newSheet.Name = viewPlan.Name.Replace("FP - ", ""); // ชื่อแบบ
+
+                // 5. ตรวจสอบว่า View วางบน Sheet นี้ได้ไหม
+                if (!Viewport.CanAddViewToSheet(doc, newSheet.Id, viewPlan.Id))
+                    continue;
+
+                // 6. คำนวณตำแหน่งกึ่งกลางของ Sheet สำหรับวาง View
+                // XYZ ที่ส่งให้ Viewport.Create คือพิกัดกึ่งกลางของ View บน Sheet
+                XYZ sheetCenter = new XYZ(
+                    (newSheet.Outline.Max.U + newSheet.Outline.Min.U) / 2.0,
+                    (newSheet.Outline.Max.V + newSheet.Outline.Min.V) / 2.0,
+                    0
+                );
+
+                // 7. วาง View ลงบน Sheet ที่ตำแหน่งกึ่งกลาง
+                Viewport viewport = Viewport.Create(doc, newSheet.Id, viewPlan.Id, sheetCenter);
+
+                sheetNumber++;
+            }
+
+            trans.Commit();
+            TaskDialog.Show("สำเร็จ", $"สร้าง Sheet อัตโนมัติ {sheetNumber - 1} แผ่น พร้อม Floor Plan ครบทุกชั้น");
+        }
+
+        return Result.Succeeded;
+    }
+}
+```
+
+### 🔍 เจาะลึก `Viewport` API
+
+*   **`Viewport.CanAddViewToSheet(doc, sheetId, viewId)`** — ตรวจสอบก่อนว่าสามารถวาง View นี้บน Sheet นั้นได้ไหม (View 1 ตัววางได้บน Sheet เดียวเท่านั้น)
+*   **`Viewport.Create(doc, sheetId, viewId, center)`** — วาง View ลงบน Sheet ที่ตำแหน่ง `center` (หน่วย: ฟุต บนพิกัด Sheet)
+*   **`viewport.SetBoxCenter(XYZ)`** — ย้ายตำแหน่ง View บน Sheet หลังจากวางแล้ว
+*   **`newSheet.Outline`** — กรอบขนาดของ Sheet (ใช้หา Min/Max เพื่อคำนวณกึ่งกลาง)
+
+---
+
+## 5. สร้าง 3D View อัตโนมัติ
+
+```csharp title="ตัวอย่าง — สร้าง 3D View มุมมองมาตรฐาน"
+using (Transaction trans = new Transaction(doc, "Create 3D View"))
+{
+    trans.Start();
+
+    // ดึง ViewFamilyType สำหรับ 3D
+    ViewFamilyType view3DType = new FilteredElementCollector(doc)
+        .OfClass(typeof(ViewFamilyType))
+        .Cast<ViewFamilyType>()
+        .FirstOrDefault(vft => vft.ViewFamily == ViewFamily.ThreeDimensional);
+
+    // สร้าง 3D View แบบ Orthographic (ไม่มี Perspective)
+    View3D view3D = View3D.CreateIsometric(doc, view3DType.Id);
+    view3D.Name = "3D - STRUCTURAL OVERVIEW";
+
+    // ปรับ Section Box (ตีกรอบแสดงผลเฉพาะส่วนที่สนใจ)
+    view3D.IsSectionBoxActive = true;
+    BoundingBoxXYZ sectionBox = new BoundingBoxXYZ
+    {
+        Min = new XYZ(-30, -20, 0),   // ขอบเขตล่างซ้าย
+        Max = new XYZ(30, 20, 15)     // ขอบเขตบนขวา (หน่วย: ฟุต)
+    };
+    view3D.SetSectionBox(sectionBox);
+
+    trans.Commit();
+}
+```
+
+---
+
+## 6. ตัวอย่างจริง: Auto-create Structural Drawing Package
+
+```csharp title="AutoDrawingPackage.cs — สร้างชุดแบบโครงสร้างอัตโนมัติ"
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class AutoDrawingPackage : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        var levels = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => l.Elevation)
+            .ToList();
+
+        ViewFamilyType floorPlanType = new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewFamilyType))
+            .Cast<ViewFamilyType>()
+            .First(vft => vft.ViewFamily == ViewFamily.FloorPlan);
+
+        FamilySymbol titleBlock = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .WhereElementIsElementType()
+            .Cast<FamilySymbol>()
+            .FirstOrDefault();
+
+        if (titleBlock == null)
+        {
+            TaskDialog.Show("Error", "ไม่พบ Title Block");
+            return Result.Failed;
+        }
+
+        using (Transaction trans = new Transaction(doc, "Auto Drawing Package"))
+        {
+            trans.Start();
+
+            int sheetNum = 1;
+            foreach (Level level in levels)
+            {
+                // สร้าง Floor Plan View
+                ViewPlan plan = ViewPlan.Create(doc, floorPlanType.Id, level.Id);
+                plan.Name = $"S-FP-{level.Name}";
+                plan.Scale = 100;
+
+                // สร้าง Sheet
+                ViewSheet sheet = ViewSheet.Create(doc, titleBlock.Id);
+                sheet.SheetNumber = $"S-{sheetNum:D3}";
+                sheet.Name = $"Floor Plan - {level.Name}";
+
+                // วาง View ตรงกลาง Sheet
+                if (Viewport.CanAddViewToSheet(doc, sheet.Id, plan.Id))
+                {
+                    XYZ center = new XYZ(
+                        (sheet.Outline.Max.U + sheet.Outline.Min.U) / 2.0,
+                        (sheet.Outline.Max.V + sheet.Outline.Min.V) / 2.0,
+                        0
+                    );
+                    Viewport.Create(doc, sheet.Id, plan.Id, center);
+                }
+
+                sheetNum++;
+            }
+
+            trans.Commit();
+        }
+
+        TaskDialog.Show("เสร็จสิ้น",
+            $"สร้างชุดแบบโครงสร้างอัตโนมัติสำเร็จ!\n" +
+            $"  - Floor Plan Views: {levels.Count} แผ่น\n" +
+            $"  - Sheets: {levels.Count} แผ่น"
+        );
+
+        return Result.Succeeded;
+    }
+}
+```

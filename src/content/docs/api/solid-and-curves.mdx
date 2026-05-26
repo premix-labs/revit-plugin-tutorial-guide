@@ -1,0 +1,283 @@
+---
+title: รูปทรง Solid และเส้นโค้ง (Solid & Curves)
+description: เจาะลึก GeometryElement, Solid, Face, Edge และ Curve เพื่อวิเคราะห์รูปร่างจริงของวัตถุใน Revit
+---
+
+ในบทที่แล้วเราเรียนเรื่อง `XYZ` และ `BoundingBox` ซึ่งเป็นการดูข้อมูลแบบหยาบๆ ในบทนี้เราจะไปลึกกว่านั้น — เข้าถึง **รูปทรง 3 มิติจริงๆ** ของวัตถุ (Solid Geometry) เพื่อวิเคราะห์พื้นที่ผิว, ปริมาตร, หรือตรวจจับการชนกันของวัตถุ (Clash Detection) ครับ
+
+---
+
+## 1. ลำดับชั้น Geometry ของ Revit
+
+ก่อนเขียนโค้ด ต้องเข้าใจโครงสร้างหลังบ้านก่อนครับ:
+
+```
+Element  (เสา, คาน, ผนัง)
+  └── GeometryElement   ← ตัวห่อหุ้มรูปทรงทั้งหมดของ Element
+        ├── Solid        ← รูปทรงสามมิติแข็ง (มีปริมาตร)
+        │     ├── FaceArray (รวบรวมพื้นผิวทุกด้าน)
+        │     │     └── Face  ← พื้นผิวแต่ละหน้า
+        │     └── EdgeArray  ← รวบรวมขอบทุกเส้น
+        │           └── Edge  ← ขอบแต่ละเส้น
+        └── Curve        ← เส้น (ไม่มีปริมาตร เช่น Model Line)
+```
+
+---
+
+## 2. `GeometryElement` — เข้าถึง Geometry ของ Element
+
+```csharp title="Command.cs — วนลูปดึง Solid ทั้งหมดจาก Element"
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using System.Text;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class GetSolidCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+
+        // 1. ให้ผู้ใช้คลิกเลือกวัตถุ
+        Reference pickedRef = uidoc.Selection.PickObject(
+            Autodesk.Revit.UI.Selection.ObjectType.Element,
+            "คลิกเลือกวัตถุที่ต้องการดูรูปทรง"
+        );
+        Element element = doc.GetElement(pickedRef.ElementId);
+
+        // 2. กำหนด Option สำหรับการดึง Geometry
+        // ComputeReferences=true: สร้าง Reference สำหรับ Tagging/Dimensioning ด้วย
+        Options geomOptions = new Options
+        {
+            ComputeReferences = true,
+            IncludeNonVisibleObjects = false, // ไม่รวมรูปทรงที่ซ่อนอยู่
+            DetailLevel = ViewDetailLevel.Fine // ดึงรูปทรงที่ละเอียดที่สุด
+        };
+
+        // 3. ดึง GeometryElement จาก Element
+        GeometryElement geomElement = element.get_Geometry(geomOptions);
+
+        if (geomElement == null)
+        {
+            TaskDialog.Show("Error", "ไม่สามารถดึง Geometry จากวัตถุนี้ได้");
+            return Result.Failed;
+        }
+
+        var sb = new StringBuilder();
+        double totalVolumeCubicFt = 0;
+
+        // 4. วนลูปผ่านรูปทรงทั้งหมด
+        foreach (GeometryObject geomObj in geomElement)
+        {
+            if (geomObj is Solid solid && solid.Volume > 0)
+            {
+                // พบ Solid! ดึงข้อมูลปริมาตรและพื้นที่ผิว
+                totalVolumeCubicFt += solid.Volume;
+                sb.AppendLine($"  Solid: ปริมาตร={solid.Volume:F3} cu.ft, พื้นที่ผิว={solid.SurfaceArea:F3} sq.ft");
+                sb.AppendLine($"         จำนวนหน้า={solid.Faces.Size}, จำนวนขอบ={solid.Edges.Size}");
+            }
+            else if (geomObj is GeometryInstance geomInst)
+            {
+                // Family Instance จะห่อ Geometry ไว้อีกชั้น ต้องแกะซ้อนออกมาอีก
+                foreach (GeometryObject instObj in geomInst.GetInstanceGeometry())
+                {
+                    if (instObj is Solid instSolid && instSolid.Volume > 0)
+                    {
+                        totalVolumeCubicFt += instSolid.Volume;
+                        sb.AppendLine($"  [Family] Solid: ปริมาตร={instSolid.Volume:F3} cu.ft");
+                    }
+                }
+            }
+        }
+
+        // 5. แปลงปริมาตรเป็น ลบ.ม.
+        double volumeCubicM = UnitUtils.ConvertFromInternalUnits(totalVolumeCubicFt, UnitTypeId.CubicMeters);
+
+        TaskDialog.Show("Geometry",
+            $"วัตถุ: {element.Name}\n" +
+            $"ปริมาตรรวม: {volumeCubicM:F4} ลบ.ม.\n\n" +
+            sb.ToString()
+        );
+
+        return Result.Succeeded;
+    }
+}
+```
+
+### 🔍 เจาะลึก `Options` (GeometryOptions)
+
+*   **`ComputeReferences`** — เมื่อตั้งเป็น `true` แต่ละ `Face` และ `Edge` จะมี `.Reference` ที่ใช้สร้าง Dimension อ้างอิงได้ (สำคัญมากสำหรับ Annotation)
+*   **`DetailLevel`** — `Coarse` (หยาบ เร็ว), `Medium`, `Fine` (ละเอียด ช้า) — ใช้ `Fine` เมื่อต้องการรูปทรงครบทุกชิ้น
+*   **`IncludeNonVisibleObjects`** — `true` เพื่อดึงรูปทรงที่ถูกซ่อนไว้ในโมเดล (เช่น รายละเอียดภายใน Family)
+
+---
+
+## 3. `Face` — พื้นผิวแต่ละหน้าของ Solid
+
+`Face` แทนพื้นผิวแต่ละด้านของรูปทรง มีทั้ง `PlanarFace` (หน้าแบน), `CylindricalFace` (หน้าโค้งทรงกระบอก) และอื่นๆ
+
+```csharp title="ตัวอย่าง — คำนวณพื้นที่ผนังแต่ละด้าน"
+// สมมติว่าเราต้องการวัดพื้นที่ด้านนอกของผนัง
+var walls = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_Walls)
+    .WhereElementIsNotElementType()
+    .ToElements();
+
+Options opts = new Options { ComputeReferences = true, DetailLevel = ViewDetailLevel.Fine };
+
+foreach (Element wall in walls)
+{
+    GeometryElement geomElem = wall.get_Geometry(opts);
+    foreach (GeometryObject obj in geomElem)
+    {
+        if (obj is not Solid solid || solid.Volume <= 0) continue;
+
+        foreach (Face face in solid.Faces)
+        {
+            double areaInSqFt = face.Area;
+            double areaInSqM = UnitUtils.ConvertFromInternalUnits(areaInSqFt, UnitTypeId.SquareMeters);
+
+            // PlanarFace มี Normal vector บอกทิศทางของหน้านั้น
+            if (face is PlanarFace planarFace)
+            {
+                XYZ normal = planarFace.FaceNormal;
+                // ตรวจว่าเป็นหน้าแนวตั้ง (Vertical) หรือไม่
+                bool isVertical = Math.Abs(normal.Z) < 0.01;
+                if (isVertical && areaInSqM > 0.1)
+                {
+                    // นี่คือพื้นผิวแนวตั้ง (ด้านข้างผนัง) ที่เราสนใจ
+                }
+            }
+        }
+    }
+}
+```
+
+---
+
+## 4. `Curve`, `Line`, `Arc` — เส้นโค้งในโมเดล
+
+`Curve` เป็น Abstract Class พ่อของเส้นทุกประเภทใน Revit:
+
+| Class | คำอธิบาย | ใช้กับ |
+|---|---|---|
+| `Line` | เส้นตรง | คาน, ขอบผนัง, Model Line |
+| `Arc` | เส้นโค้งวงกลม | คานโค้ง, Model Arc |
+| `Ellipse` | เส้นรูปวงรี | — |
+| `HermiteSpline` | เส้นโค้ง Spline | — |
+| `NurbSpline` | เส้น NURBS | — |
+
+```csharp title="ตัวอย่าง — สร้าง Model Line และดึงจุดบนเส้น"
+using (Transaction trans = new Transaction(doc, "Create Model Line"))
+{
+    trans.Start();
+
+    // สร้างเส้นตรงจากจุด A → B
+    XYZ pointA = new XYZ(0, 0, 0);
+    XYZ pointB = new XYZ(10, 0, 0); // 10 ฟุต
+
+    Line line = Line.CreateBound(pointA, pointB);
+
+    // ดึงจุดกึ่งกลางของเส้น (Parameter 0.5 = กลางเส้น, 0=ต้น, 1=ปลาย)
+    XYZ midPoint = line.Evaluate(0.5, normalized: true);
+
+    // ดึงความยาวเส้น
+    double lengthMm = UnitUtils.ConvertFromInternalUnits(line.Length, UnitTypeId.Millimeters);
+
+    // สร้าง SketchPlane สำหรับวาด Model Line
+    Plane plane = Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero);
+    SketchPlane sketchPlane = SketchPlane.Create(doc, plane);
+
+    // วาด Model Line ลงในโมเดล
+    doc.Create.NewModelCurve(line, sketchPlane);
+
+    trans.Commit();
+}
+```
+
+### 🔍 เมธอดสำคัญของ `Curve`
+
+| Method | คำอธิบาย |
+|---|---|
+| `curve.Length` | ความยาวของเส้น (ฟุต) |
+| `curve.GetEndPoint(0)` | จุดเริ่มต้น |
+| `curve.GetEndPoint(1)` | จุดสิ้นสุด |
+| `curve.Evaluate(t, normalized)` | หาจุดบนเส้นที่ตำแหน่ง t (0.0 - 1.0 ถ้า normalized=true) |
+| `curve.Project(XYZ)` | หาจุดที่ใกล้ที่สุดบนเส้นจากจุดที่กำหนด |
+| `curve.Intersect(curve2, out result)` | หาจุดตัดระหว่างเส้น 2 เส้น |
+
+---
+
+## 5. ตัวอย่างจริง: สแกนและคำนวณพื้นที่ผนังทั้งโมเดล
+
+```csharp title="WallAreaCalculator.cs"
+using System;
+using System.Text;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class WallAreaCalculator : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        var walls = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_Walls)
+            .WhereElementIsNotElementType()
+            .ToElements();
+
+        double totalAreaSqM = 0;
+        Options opts = new Options { DetailLevel = ViewDetailLevel.Fine };
+
+        foreach (Element wall in walls)
+        {
+            GeometryElement geomElem = wall.get_Geometry(opts);
+            if (geomElem == null) continue;
+
+            foreach (GeometryObject obj in geomElem)
+            {
+                if (obj is not Solid solid || solid.Volume <= 0) continue;
+
+                foreach (Face face in solid.Faces)
+                {
+                    if (face is not PlanarFace pf) continue;
+
+                    // กรองเฉพาะหน้าแนวตั้ง (ด้านข้างผนัง)
+                    bool isVertical = Math.Abs(pf.FaceNormal.Z) < 0.01;
+                    if (!isVertical) continue;
+
+                    double areaSqM = UnitUtils.ConvertFromInternalUnits(pf.Area, UnitTypeId.SquareMeters);
+                    totalAreaSqM += areaSqM;
+                }
+            }
+        }
+
+        // หาร 2 เพราะแต่ละผนังมี 2 ด้าน (ด้านใน + ด้านนอก)
+        totalAreaSqM /= 2.0;
+
+        TaskDialog.Show("พื้นที่ผนังรวม",
+            $"พบผนัง: {walls.Count} ชิ้น\n" +
+            $"พื้นที่รวม: {totalAreaSqM:F2} ตร.ม."
+        );
+
+        return Result.Succeeded;
+    }
+}
+```
+
+:::tip[เมื่อไหร่ควรใช้ Solid Geometry?]
+- ต้องการพื้นที่ผิว/ปริมาตรที่แม่นยำ
+- ต้องการ Clash Detection (ตรวจการชนกัน)
+- ต้องการ Tagging/Dimension ที่อ้างอิงผิวของวัตถุ
+
+สำหรับงานทั่วไป (ดึงพารามิเตอร์, พิกัด) ใช้ `Parameter` และ `Location` ธรรมดาก็เพียงพอ เพราะ `get_Geometry()` มีต้นทุน CPU สูง
+:::

@@ -1,0 +1,258 @@
+---
+title: CI/CD Pipeline สำหรับ Revit Plugin
+description: ตั้งค่า GitHub Actions เพื่อ Build อัตโนมัติ, รัน Unit Test และ Release ปลั๊กอินทุกครั้งที่ Push โค้ด
+---
+
+CI/CD (Continuous Integration / Continuous Deployment) คือระบบที่จะ Build, Test และ Package ปลั๊กอินของคุณ **โดยอัตโนมัติทุกครั้งที่ Push โค้ดขึ้น GitHub** ช่วยให้ทีมพัฒนาทราบทันทีว่าโค้ดใหม่ผ่านการทดสอบหรือไม่ โดยไม่ต้องรอให้ใครมารันมือ
+
+---
+
+## ภาพรวม Pipeline
+
+```
+Push to main branch
+     │
+     ▼
+[GitHub Actions Trigger]
+     │
+     ├── Step 1: Checkout Code
+     ├── Step 2: Setup .NET 8
+     ├── Step 3: Restore NuGet Packages
+     ├── Step 4: Build Solution (dotnet build)
+     ├── Step 5: Run Unit Tests (dotnet test)
+     └── Step 6: Package & Create Release (สำหรับ tag push)
+```
+
+---
+
+## 1. โครงสร้างโปรเจ็กต์ที่รองรับ CI/CD
+
+ก่อนตั้งค่า Pipeline ให้ปรับโครงสร้าง Solution ให้เหมาะสม:
+
+```
+RevitToolkit.sln
+├── RevitToolkit/           ← Main Plugin Project
+│   ├── RevitToolkit.csproj
+│   ├── Command.cs
+│   ├── App.cs
+│   └── Services/
+│       └── ColumnNumberingService.cs   ← Logic ที่แยกไว้
+│
+└── RevitToolkit.Tests/     ← Unit Test Project
+    ├── RevitToolkit.Tests.csproj
+    └── ColumnNumberingServiceTests.cs
+```
+
+---
+
+## 2. GitHub Actions Workflow
+
+สร้างไฟล์นี้ในโปรเจ็กต์:
+
+```yaml title=".github/workflows/build-and-test.yml"
+name: Build and Test Revit Plugin
+
+# กำหนดว่า Workflow จะทำงานเมื่อไหร่
+on:
+  push:
+    branches: [ main, develop ]   # ทุกครั้งที่ Push ไปยัง main หรือ develop
+  pull_request:
+    branches: [ main ]            # ทุกครั้งที่เปิด Pull Request เข้า main
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: windows-latest      # ต้องใช้ Windows เพราะ Revit API ต้องการ Windows
+
+    steps:
+      # Step 1: ดึงโค้ดจาก Repository
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # ดึง History ทั้งหมด (จำเป็นสำหรับ GitVersion)
+
+      # Step 2: ตั้งค่า .NET SDK
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Step 3: Cache NuGet Packages (เพื่อความเร็ว)
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # Step 4: Restore Dependencies
+      - name: Restore NuGet packages
+        run: dotnet restore RevitToolkit.sln
+
+      # Step 5: Build Solution
+      # /p:RevitAPIPath ส่ง path ไฟล์ DLL ของ Revit API (ต้องการสำหรับ compile)
+      - name: Build solution
+        run: |
+          dotnet build RevitToolkit.sln \
+            --configuration Release \
+            --no-restore \
+            /p:RevitAPIPath="C:\Program Files\Autodesk\Revit 2026"
+
+      # Step 6: Run Unit Tests
+      - name: Run unit tests
+        run: |
+          dotnet test RevitToolkit.Tests/RevitToolkit.Tests.csproj \
+            --configuration Release \
+            --no-build \
+            --verbosity normal \
+            --logger "trx;LogFileName=test-results.trx"
+
+      # Step 7: Publish Test Results
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()  # รันเสมอ แม้ Test จะ Fail
+        with:
+          name: Unit Test Results
+          path: '**/*.trx'
+          reporter: dotnet-trx
+```
+
+---
+
+## 3. Auto-Release เมื่อสร้าง Git Tag
+
+เพิ่ม Job นี้เพื่อ Package ปลั๊กอินและสร้าง GitHub Release อัตโนมัติ:
+
+```yaml title=".github/workflows/release.yml"
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # ทำงานเมื่อ Push Tag แบบ v1.0.0, v2.1.3 ฯลฯ
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore and Build
+        run: |
+          dotnet restore RevitToolkit.sln
+          dotnet build RevitToolkit.sln --configuration Release --no-restore
+
+      # Pack ไฟล์ที่จำเป็นสำหรับติดตั้งปลั๊กอิน
+      - name: Package plugin files
+        run: |
+          mkdir -p artifacts/RevitToolkit
+          
+          # คัดลอก DLL หลัก (ไม่รวม RevitAPI.dll ที่มีใน Revit อยู่แล้ว)
+          Copy-Item "RevitToolkit/bin/Release/net8.0-windows/RevitToolkit.dll" `
+            "artifacts/RevitToolkit/"
+          
+          # คัดลอกไฟล์ .addin
+          Copy-Item "RevitToolkit/RevitToolkit.addin" "artifacts/"
+          
+          # คัดลอกโฟลเดอร์ icon
+          if (Test-Path "RevitToolkit/bin/Release/net8.0-windows/icon") {
+            Copy-Item "RevitToolkit/bin/Release/net8.0-windows/icon" `
+              "artifacts/RevitToolkit/" -Recurse
+          }
+          
+          # บีบอัดเป็น ZIP พร้อมชื่อเวอร์ชัน
+          Compress-Archive -Path "artifacts/*" `
+            -DestinationPath "RevitToolkit-${{ github.ref_name }}.zip"
+        shell: pwsh
+
+      # สร้าง GitHub Release พร้อมแนบไฟล์ ZIP
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: RevitToolkit ${{ github.ref_name }}
+          body: |
+            ## 📦 RevitToolkit ${{ github.ref_name }}
+            
+            ### วิธีติดตั้ง
+            1. ดาวน์โหลดไฟล์ `RevitToolkit-${{ github.ref_name }}.zip`
+            2. แตกไฟล์ได้เลย
+            3. คัดลอก `RevitToolkit.addin` → `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+            4. คัดลอกโฟลเดอร์ `RevitToolkit\` → `C:\ProgramData\Autodesk\Revit\Addins\2026\`
+            5. เปิด Revit 2026 แล้วเจอ Tab ใหม่ได้เลย!
+          files: |
+            RevitToolkit-${{ github.ref_name }}.zip
+          generate_release_notes: true  # สร้าง Changelog จาก Commit อัตโนมัติ
+```
+
+---
+
+## 4. Mock Revit API DLL สำหรับ CI
+
+ปัญหาคือ Server ของ GitHub Actions ไม่มี Revit ติดตั้ง ดังนั้น `RevitAPI.dll` จะไม่มี! วิธีแก้คือสร้าง **Mock DLL** สำหรับ Build เท่านั้น:
+
+```xml title="RevitToolkit.csproj — ปรับ Reference สำหรับ CI"
+<ItemGroup>
+  <!-- ใช้ DLL จริงเมื่อ Build บน Developer Machine -->
+  <Reference Include="RevitAPI" Condition="'$(CI)' != 'true'">
+    <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+    <Private>false</Private>
+  </Reference>
+  <Reference Include="RevitAPIUI" Condition="'$(CI)' != 'true'">
+    <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
+    <Private>false</Private>
+  </Reference>
+
+  <!-- ใช้ NuGet Package Mock เมื่อ Build บน CI Server -->
+  <PackageReference Include="Revit_All_Main_Versions_API_x64" 
+                    Version="2026.0.0"
+                    Condition="'$(CI)' == 'true'" />
+</ItemGroup>
+```
+
+:::note[Revit API NuGet Package]
+มี NuGet Package ไม่เป็นทางการที่รวบรวม Revit API DLL ให้ใช้งาน เช่น `Revit_All_Main_Versions_API_x64` แต่ควรตรวจสอบ License และใช้ในสภาพแวดล้อม CI เท่านั้น ไม่ควรใช้แทน DLL จริงในเครื่องพัฒนา
+:::
+
+---
+
+## 5. วิธีใช้งาน: สร้าง Release ใหม่
+
+```bash
+# 1. Commit โค้ดที่พร้อม Release
+git add .
+git commit -m "feat: เพิ่มระบบ Auto-tag เสาอัตโนมัติ"
+
+# 2. สร้าง Tag เวอร์ชัน
+git tag -a v1.2.0 -m "Release v1.2.0: Auto-tag feature"
+
+# 3. Push ทั้ง Code และ Tag
+git push origin main
+git push origin v1.2.0
+
+# ✅ GitHub Actions จะ Build, Test และสร้าง Release อัตโนมัติ!
+```
+
+---
+
+## 6. Badge แสดงสถานะ Build ใน README
+
+```markdown title="README.md"
+# RevitToolkit
+
+![Build Status](https://github.com/YOUR_USERNAME/revit-toolkit/actions/workflows/build-and-test.yml/badge.svg)
+![Latest Release](https://img.shields.io/github/v/release/YOUR_USERNAME/revit-toolkit)
+```
+
+:::tip[ประโยชน์ที่ได้รับ]
+- **ทีม** รู้ทันทีว่าโค้ดใหม่ผ่านหรือไม่ ผ่าน Build Status Badge
+- **ผู้ใช้** ดาวน์โหลดและติดตั้งได้ง่ายจาก GitHub Releases
+- **นักพัฒนา** ไม่ต้อง Build และ Package มือทุกครั้ง ประหยัดเวลาได้มาก
+:::
