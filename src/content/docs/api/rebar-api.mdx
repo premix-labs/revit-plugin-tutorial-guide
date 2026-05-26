@@ -1,0 +1,223 @@
+---
+title: การจัดการเหล็กเสริม (Rebar API)
+description: เจาะลึกหัวใจสำคัญของงานวิศวกรรมโครงสร้าง เรียนรู้การดึงข้อมูลและจำลองเหล็กเสริม (Rebar) ในโมเดลคอนกรีตเสริมเหล็ก พร้อมตัวอย่างการทำ Bar Cut List
+---
+
+งานโครงสร้างคอนกรีตเสริมเหล็ก (RC Structures) ถือเป็นสัดส่วนงานที่ใหญ่ที่สุดในงานก่อสร้างบ้านเรา การนำโมเดล 3D มาใช้ประโยชน์ให้คุ้มค่าที่สุดคือการ **"ถอดปริมาณเหล็ก" (Rebar Takeoff)** และ **"จัดทำตารางตัดเหล็ก" (Bar Cut List)** 
+
+Revit ถือว่าเป็นซอฟต์แวร์ระดับท็อปในการทำ RC Detailing แต่ถ้าเราใช้ API เข้ามาช่วย เราจะสามารถจัดการเหล็กจำนวนมหาศาลได้อย่างอัตโนมัติ ไม่ว่าจะเป็นการเช็กระยะทาบ การนับจำนวนเส้น หรือการสร้างโมเดลเหล็กแบบพาราเมตริกครับ!
+
+---
+
+## 1. รู้จักกับ Rebar API
+
+ใน Revit API หมวดหมู่ที่เกี่ยวข้องกับเหล็กเสริมจะอยู่ใน Namespace `Autodesk.Revit.DB.Structure` โดยมี Class หลักๆ ดังนี้:
+
+*   **`Rebar`**: ตัวแทนของเหล็กเสริม (เส้นเดี่ยว หรือแบบผูกเป็นชุด)
+*   **`RebarShape`**: รูปร่างหรือแพทเทิร์นการดัดงอของเหล็ก (เช่น เหล็กปลอก, เหล็กตัว U, เหล็กฉาก)
+*   **`RebarBarType`**: ชนิดของเหล็กเส้น (เช่น RB9, DB12, DB16, SD40)
+*   **`RebarHostData`**: ข้อมูลชิ้นส่วนโครงสร้างที่เหล็กเส้นนั้นฝังอยู่ (เช่น เสา คาน ฐานราก)
+
+```csharp title="การ Using Namespace สำหรับงานเหล็ก"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure; // ขาดไม่ได้เลยสำหรับงานนี้!
+```
+
+---
+
+## 2. การค้นหาเหล็กเสริมทั้งหมดในเสาหรือคาน (Get Rebars in Host)
+
+หากผู้ใช้คลิกเลือกเสาหรือคาน 1 ต้น เราจะรู้ได้อย่างไรว่าข้างในมีเหล็กเสริมอะไรฝังอยู่บ้าง? วิธีที่ง่ายและได้ผลลัพธ์แม่นยำที่สุด คือการใช้ `RebarHostData` ครับ
+
+```csharp title="การดึงข้อมูลเหล็กในเสา"
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+
+public void GetRebarsInElement(Element hostElement)
+{
+    // 1. ตรวจสอบว่าชิ้นงานนี้สามารถรับเหล็กเสริมได้หรือไม่ (เป็น Concrete Host หรือเปล่า)
+    RebarHostData hostData = RebarHostData.GetRebarHostData(hostElement);
+    
+    if (hostData == null || !hostData.IsValidHost())
+    {
+        TaskDialog.Show("แจ้งเตือน", "ชิ้นงานนี้ไม่ใช่ชิ้นส่วนคอนกรีตที่รองรับเหล็กเสริม");
+        return;
+    }
+
+    // 2. ดึงเหล็กเสริมทั้งหมดที่ฝังอยู่ในชิ้นงานนี้
+    IList<Rebar> rebars = hostData.GetRebarsInHost();
+
+    TaskDialog.Show("ผลลัพธ์", $"พบเหล็กเสริมทั้งหมด {rebars.Count} ชุดในชิ้นงานนี้");
+}
+```
+
+---
+
+## 3. การอ่านความยาวและรูปร่างของเหล็ก (Centerline Curves)
+
+> [!WARNING]
+> การอ่านปริมาณเหล็กใน Revit เป็นเรื่องที่ปราบเซียนมาก! 
+> คุณไม่ควรไปอ่านจาก Parameter "Length" ทื่อๆ เพราะเหล็ก 1 ชุด (Rebar Set) อาจจะมีการผูกรวมกันหลายเส้น (Quantity) และถ้าระยะทาบหรือระยะงอขอเปลี่ยน ความยาวก็จะเปลี่ยนตาม
+
+วิธีการที่ชัวร์ที่สุดและเป็นมาตรฐานของวิศวกรโครงสร้าง คือการให้ API ไปดึง **"เส้นกึ่งกลางเหล็ก" (Centerline Curves)** ของเหล็กทุกเส้นออกมาบวกรวมกันตรงๆ ครับ
+
+```csharp title="CalculateRebarLengthCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CalculateRebarLengthCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+
+        try
+        {
+            // 1. ให้ผู้ใช้คลิกเลือกเหล็กเสริม 1 ชุดบนหน้าจอ
+            Reference pickedRef = uidoc.Selection.PickObject(
+                ObjectType.Element,
+                "คลิกเลือกชุดเหล็กเสริม (Rebar) 1 ชุด"
+            );
+
+            Element elem = doc.GetElement(pickedRef);
+
+            // ตรวจสอบให้แน่ใจว่าเป็น Rebar ของจริง
+            if (elem is Rebar rebar)
+            {
+                // ดึงชนิดเหล็ก เช่น DB12
+                RebarBarType barType = doc.GetElement(rebar.GetTypeId()) as RebarBarType;
+                
+                // ดึงรูปร่าง เช่น M_T1 (เหล็กปลอก)
+                string shapeName = "ไม่มี Shape";
+                if (rebar.RebarShapeId != ElementId.InvalidElementId)
+                {
+                    RebarShape shape = doc.GetElement(rebar.RebarShapeId) as RebarShape;
+                    shapeName = shape?.Name ?? "ไม่มี Shape";
+                }
+
+                // 2. ขอเส้นกึ่งกลางของเหล็กชุดนี้
+                // false = ไม่เอาการปรับแก้ปลายงอ, true = เอาปลายตะขอ Hook ด้วย, true = เอาส่วนปลายดัดโค้งด้วย
+                IList<Curve> centerlineCurves = rebar.GetCenterlineCurves(
+                    adjustForSelfIntersection: false, 
+                    suppressHooks: false, 
+                    suppressBendRadius: false,
+                    multiplanarOption: MultiplanarOption.IncludeOnlyPlanarCurves,
+                    barPositionIndex: 0 // ถ้าเป็น Rebar Set ให้ใส่ Index ของเส้นที่ต้องการ
+                );
+
+                // 3. วนลูปบวกความยาว (ฟุต -> เมตร)
+                double totalLengthFeet = 0;
+                foreach (Curve curve in centerlineCurves)
+                {
+                    totalLengthFeet += curve.Length;
+                }
+
+                // การแปลงหน่วย Revit 2022+ 
+                double totalLengthMeters = UnitUtils.ConvertFromInternalUnits(totalLengthFeet, UnitTypeId.Meters);
+
+                // 4. สรุปผล Bar Cut List
+                string report = $"ข้อมูลเหล็กเสริม\n" +
+                                $"-----------------\n" +
+                                $"เกรด/ขนาด: {barType?.Name}\n" +
+                                $"รูปร่างการดัด (Shape): {shapeName}\n" +
+                                $"จำนวนเส้นในชุด (Quantity): {rebar.Quantity}\n" +
+                                $"ความยาว 1 เส้น: {totalLengthMeters:F3} เมตร\n" +
+                                $"ความยาวรวมทั้งชุด: {(totalLengthMeters * rebar.Quantity):F3} เมตร";
+
+                TaskDialog.Show("Bar Cut List - Info", report);
+                return Result.Succeeded;
+            }
+            else
+            {
+                TaskDialog.Show("Error", "ชิ้นงานที่เลือกไม่ใช่เหล็กเสริม (Rebar)");
+                return Result.Cancelled;
+            }
+        }
+        catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+        {
+            return Result.Cancelled;
+        }
+    }
+}
+```
+
+---
+
+## 4. การสร้างโมเดลเหล็กด้วยโค้ด (Create Rebar)
+
+การให้คอมพิวเตอร์เขียนโมเดลเหล็กให้ (Auto-Rebarring) คือหนึ่งในไม้ตายสูงสุดของระบบ BIM Automation ครับ ในบทนี้เราจะมาดูตัวอย่างการสร้าง **"เหล็กแกนเสา"** แบบเส้นตรงกันครับ
+
+การสร้างเหล็กมีด้วยกัน 2 ท่าหลักๆ:
+1. `Rebar.CreateFromCurves`: สร้างเส้นกราฟิกเองลอยๆ เหมาะกับเหล็กฟรีฟอร์มแปลกๆ
+2. `Rebar.CreateFromRebarShape`: สร้างจากแบบฟอร์มมาตรฐาน (RebarShape) ที่อยู่ในโปรเจ็กต์ **(แนะนำวิธีนี้)**
+
+```csharp title="ตัวอย่างการยัดเหล็กแกนลงในเสา"
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+
+public void CreateColumnMainRebars(Document doc, Element column)
+{
+    // 1. ค้นหาชนิดเหล็ก (เช่น DB16)
+    RebarBarType db16Type = new FilteredElementCollector(doc)
+        .OfClass(typeof(RebarBarType))
+        .Cast<RebarBarType>()
+        .FirstOrDefault(t => t.Name.Contains("DB16"));
+
+    // 2. ค้นหารูปร่าง (เช่น เหล็กเส้นตรง M_00)
+    RebarShape straightShape = new FilteredElementCollector(doc)
+        .OfClass(typeof(RebarShape))
+        .Cast<RebarShape>()
+        .FirstOrDefault(s => s.Name == "M_00" || s.Name == "00");
+
+    if (db16Type == null || straightShape == null) return;
+
+    // 3. กำหนดทิศทางและจุดเริ่มต้นของชุดเหล็ก
+    BoundingBoxXYZ bbox = column.get_BoundingBox(null);
+    XYZ origin = bbox.Min; // จุดมุมล่างของเสา
+    XYZ xDirection = XYZ.BasisX; // ทิศทางการกระจายเหล็กแนวนอน
+    XYZ yDirection = XYZ.BasisY;
+
+    // 4. เปิด Transaction และสั่งสร้างโมเดลเหล็ก!
+    using (Transaction trans = new Transaction(doc, "สร้างเหล็กแกนเสา"))
+    {
+        trans.Start();
+
+        Rebar rebar = Rebar.CreateFromRebarShape(
+            doc,
+            straightShape,
+            db16Type,
+            column,
+            origin,
+            xDirection,
+            yDirection
+        );
+
+        // 5. ปรับให้เป็นแบบ Layout (เช่น ใส่ 4 เส้น กระจายห่างกันระยะหนึ่ง)
+        rebar.GetShapeDrivenAccessor().SetLayoutAsFixedNumber(
+            numberOfBarPositions: 4,
+            arrayLength: UnitUtils.ConvertToInternalUnits(0.2, UnitTypeId.Meters), // ระยะกระจาย 20 cm
+            barsOnNormalSide: true,
+            includeFirstBar: true,
+            includeLastBar: true
+        );
+
+        trans.Commit();
+    }
+}
+```
+
+:::tip[ข้อควรระวังเรื่องระยะหุ้มคอนกรีต (Cover)]
+ในการทำงานระดับแอดวานซ์ คุณไม่ควรยัดเหล็กชิดขอบ BoundingBox ตรงๆ แต่คุณควรดึงระยะหุ้มจาก `RebarHostData.GetCoverType(CoverType)` เพื่อหักลบระยะ Cover ออกก่อน เพื่อให้แบบออกมาถูกต้องตามมาตรฐานวิศวกรรมกรรมครับ!
+:::

@@ -57,6 +57,7 @@ export default defineConfig({
 					label: 'Parameters & Data Management',
 					items: [
 						{ label: 'พารามิเตอร์ขั้นสูง (Parameters API)', slug: 'api/parameters-advanced' },
+						{ label: 'การฝังข้อมูล (Extensible Storage)', slug: 'api/extensible-storage' },
 					],
 				},
 				{
@@ -73,10 +74,24 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Structural Detailing (Rebar)',
+					items: [
+						{ label: 'การจัดการเหล็กเสริม (Rebar API)', slug: 'api/rebar-api' },
+					],
+				},
+				{
+					label: 'Structural Analysis',
+					items: [
+						{ label: 'Analytical Model API (Revit 2023+)', slug: 'api/analytical-model' },
+					],
+				},
+				{
 					label: 'Geometry & Spatial API',
 					items: [
 						{ label: 'พิกัดและตำแหน่ง (XYZ & BoundingBox)', slug: 'api/geometry-api' },
 						{ label: 'รูปทรง Solid และเส้นโค้ง', slug: 'api/solid-and-curves' },
+						{ label: 'การสร้างก้อนวัตถุฟรีฟอร์ม (DirectShape)', slug: 'api/directshape-api' },
+						{ label: 'ระบบตรวจจับการชน (Clash Detection)', slug: 'api/clash-detection' },
 					],
 				},
 				{
@@ -89,6 +104,7 @@ export default defineConfig({
 					label: 'Events & Automation',
 					items: [
 						{ label: 'Events, Updaters & Hooks', slug: 'api/events-and-updaters' },
+						{ label: 'การจัดการแจ้งเตือน (Failure API)', slug: 'api/failures-api' },
 					],
 				},
 				{

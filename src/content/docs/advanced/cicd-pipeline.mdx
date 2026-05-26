@@ -156,6 +156,7 @@ jobs:
           mkdir -p artifacts/RevitToolkit
           
           # คัดลอก DLL หลัก (ไม่รวม RevitAPI.dll ที่มีใน Revit อยู่แล้ว)
+          # ก๊อปปี้ไฟล์โปรแกรม (ถ้า Build เป็น Revit 2027 โฟลเดอร์จะเป็น net10.0-windows)
           Copy-Item "RevitToolkit/bin/Release/net8.0-windows/RevitToolkit.dll" `
             "artifacts/RevitToolkit/"
           

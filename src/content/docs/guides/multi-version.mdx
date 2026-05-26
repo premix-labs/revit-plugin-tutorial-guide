@@ -1,6 +1,6 @@
 ---
 title: การทำรองรับหลายเวอร์ชัน (Multi-Version)
-description: จัดการ Source Code ชุดเดียวให้รองรับ Revit 2024, 2025 และ 2026 พร้อมกัน
+description: จัดการ Source Code ชุดเดียวให้รองรับ Revit 2024, 2026 ไปจนถึง 2027 พร้อมกัน
 ---
 
 ปัญหาโลกแตกของคนทำ Revit Plugin คือ "ผู้ใช้งานในบริษัทใช้ Revit คนละเวอร์ชันกัน"
@@ -27,13 +27,19 @@ Revit มีการเปลี่ยน API ในทุกๆ ปี (เช
 
 ### 1. ใส่ตัวแปร Revit เข้าไปใน .csproj
 ```xml title="อัปเดตไฟล์ .csproj"
-  <!-- ถ้ากำลัง Build ของปี 2026 -->
+  <!-- ถ้ากำลัง Build ของปี 2027 (ใช้ .NET 10) -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Revit2027'">
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <DefineConstants>REVIT2027</DefineConstants>
+  </PropertyGroup>
+
+  <!-- ถ้ากำลัง Build ของปี 2026 (ใช้ .NET 8) -->
   <PropertyGroup Condition="'$(Configuration)' == 'Revit2026'">
     <TargetFramework>net8.0-windows</TargetFramework>
     <DefineConstants>REVIT2026</DefineConstants>
   </PropertyGroup>
 
-  <!-- ถ้ากำลัง Build ของปี 2024 (สมมติ) -->
+  <!-- ถ้ากำลัง Build ของปี 2024 (ใช้ .NET 4.8) -->
   <PropertyGroup Condition="'$(Configuration)' == 'Revit2024'">
     <TargetFramework>net48</TargetFramework>
     <DefineConstants>REVIT2024</DefineConstants>
@@ -71,12 +77,13 @@ public double ดึงความยาวคาน(Element beam)
 
 เมื่อนักพัฒนาเริ่มก้าวขึ้นสู่การทำปลั๊กอินรองรับหลายเวอร์ชันพร้อมกัน (Multi-targeting) มีมิติเทคนิคสำคัญ 2 ประการที่มักสร้างความปวดหัวให้กับจูเนียร์เดฟอย่างมาก ซึ่งเราจะมาชำแหละวิเคราะห์แนวทางแก้ไขดังนี้ครับ:
 
-### 1. การปะทะกันของสถาปัตยกรรม .NET (.NET 4.8 vs .NET 8.0)
+### 1. การปะทะกันของสถาปัตยกรรม .NET (.NET 4.8 vs .NET 8.0 vs .NET 10.0)
 นี่คือความเปลี่ยนแปลงครั้งใหญ่ที่สุดในประวัติศาสตร์ของ Revit API:
 *   **Revit 2021 - 2024:** ทำงานบนเทคโนโลยีแบบเก่าคือ **.NET Framework 4.8**
-*   **Revit 2025 - 2026+:** ก้าวข้ามผ่านสู่ยุคโมเดิร์นบน **.NET 8.0 (และอนาคต)**
-*   **ปัญหาทางปฏิบัติ:** .NET Framework และ .NET 8 มีชุดไลบรารีเบื้องหลังหลายชิ้นไม่เหมือนกัน เช่น ระบบหน้าต่าง WPF หรือการประมวลผล JSON 
-*   **ทางออกที่ดีที่สุด:** เมื่อเราประกาศใช้ `<TargetFrameworks>net48;net8.0-windows</TargetFrameworks>` ให้เราใช้สัญลักษณ์ `#if REVIT2024` คอยดักจับการเรียกใช้คลาสพิเศษที่ยกเลิกไปใน .NET 8 หรือใช้ชุดเงื่อนไขการติดตั้ง Reference DLL ในไฟล `.csproj` แยกประเภทการอ้างอิงให้ชัดเจนตามบล็อกสวิตช์ Configuration ครับ
+*   **Revit 2025 - 2026:** ก้าวข้ามผ่านสู่ยุคโมเดิร์นบน **.NET 8.0**
+*   **Revit 2027+:** ล้ำหน้าไปอีกขั้นด้วยการย้ายโครงสร้างสู่ **.NET 10.0**
+*   **ปัญหาทางปฏิบัติ:** .NET เวอร์ชันต่างกันมีชุดไลบรารีเบื้องหลังหลายชิ้นไม่เหมือนกัน เช่น ระบบหน้าต่าง WPF หรือการประมวลผล JSON 
+*   **ทางออกที่ดีที่สุด:** เมื่อเราประกาศใช้ `<TargetFrameworks>net48;net8.0-windows;net10.0-windows</TargetFrameworks>` ให้เราใช้สัญลักษณ์ `#if REVIT2024` คอยดักจับการเรียกใช้คลาสพิเศษที่ยกเลิกไป หรือใช้ชุดเงื่อนไขการติดตั้ง Reference DLL ในไฟล์ `.csproj` แยกประเภทการอ้างอิงให้ชัดเจนตามบล็อกสวิตช์ Configuration ครับ
 
 ---
 
@@ -105,8 +112,8 @@ public static class UnitConverter
 {
     public static double ConvertFeetToMm(double feetValue)
     {
-#if REVIT2026 || REVIT2025 || REVIT2024_UP
-        // สำหรับ Revit เวอร์ชันใหม่ที่เปลี่ยนไปใช้ ForgeTypeId
+#if REVIT2027 || REVIT2026 || REVIT2025
+        // สำหรับ Revit เวอร์ชันใหม่ (2025-2027+) ที่เปลี่ยนไปใช้ ForgeTypeId
         return UnitUtils.ConvertFromInternalUnits(feetValue, UnitTypeId.Millimeters);
 #else
         // สำหรับ Revit เวอร์ชันเก่าที่ยังคงค้างอยู่กับระบบเดิม

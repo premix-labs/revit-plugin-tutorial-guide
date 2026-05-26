@@ -1,0 +1,145 @@
+---
+title: การฝังข้อมูลลับขั้นสูง (Extensible Storage)
+description: สอนการสร้างฐานข้อมูล Database ขนาดเล็กฝังซ่อนไว้ในโมเดลแบบล่องหน (Invisible Data) ป้องกันผู้ใช้ทั่วไปลบหรือแก้ไข เหมาะสำหรับเก็บค่าจากการคำนวณโครงสร้าง
+---
+
+วิศวกรโครงสร้างมักมีผลลัพธ์จากการวิเคราะห์โครงสร้าง (Structural Analysis Results) หรือการออกแบบ (Design Output) ที่ซับซ้อนเกินกว่าจะเอาไปเก็บไว้ในช่อง Shared Parameter ธรรมดา เช่น อาเรย์ของแรงเฉือนตามความยาวคาน (Shear Force Envelope) หรือออบเจ็กต์ข้อมูล JSON 
+
+อีกปัญหาหนึ่งคือพารามิเตอร์ปกติผู้ใช้งานทั่วไป (เช่น ดราฟต์แมน) สามารถเข้าไปเผลอพิมพ์แก้หรือกดลบทิ้งได้ง่ายๆ ทำให้ข้อมูลเสียหาย
+
+Revit API มีระบบซ่อนข้อมูลระดับลึกที่เรียกว่า **"Extensible Storage"** ครับ!
+
+---
+
+## 1. การทำงานของ Extensible Storage
+
+เปรียบเทียบการสร้าง Extensible Storage ได้กับการสร้างระบบฐานข้อมูล (Database) ขนาดเล็ก:
+1. **SchemaBuilder (ออกแบบหน้าตาตาราง)**: นิยามว่าตารางข้อมูลเราชื่ออะไร มีคอลัมน์ชื่ออะไรบ้าง และเก็บตัวเลขหรือข้อความ
+2. **Schema (แม่พิมพ์ตาราง)**: โครงสร้างตารางที่ล็อกหน้าตาไว้แล้ว พร้อมนำไปใช้งาน
+3. **Entity (แถวข้อมูล/เรคคอร์ด)**: แผ่นบันทึกข้อมูลที่เรากรอกค่าจริงๆ ลงไป แล้วเอาแผ่นนี้ไปแปะฝังไว้ในชิ้นส่วน Element หรือตัว Document
+
+---
+
+## 2. การสร้างแบบแผนข้อมูล (SchemaBuilder)
+
+สมมติว่าเราต้องการสร้างที่เก็บข้อมูลลับชื่อ "ColumnDesignData" เพื่อฝังค่าโมเมนต์ (Moment) และอัตราส่วนกำลัง (Ratio) ลงในเสา เราจะต้องนิยามตารางนี้ขึ้นมาก่อน:
+
+```csharp title="การนิยามโครงสร้าง Schema ลับ"
+using System;
+using Autodesk.Revit.DB.ExtensibleStorage;
+
+public static class SchemaConfig
+{
+    // 1. ระบุรหัสลับ GUID ประจำฐานข้อมูลนี้ (ห้ามซ้ำกับคนอื่นเด็ดขาด)
+    public static readonly Guid schemaGuid = new Guid("A1B2C3D4-1111-2222-3333-444455556666");
+
+    public static Schema GetOrCreateSchema()
+    {
+        // 2. ตรวจสอบว่าเคยสร้างและลงทะเบียน Schema นี้ไว้ในโปรแกรมหรือยัง
+        Schema existingSchema = Schema.Lookup(schemaGuid);
+        if (existingSchema != null) return existingSchema;
+
+        // 3. ถ้ายังไม่มี ให้เริ่มสร้างแม่พิมพ์ตารางใหม่
+        SchemaBuilder builder = new SchemaBuilder(schemaGuid);
+
+        // ตั้งค่าสิทธิ์การเข้าถึง (ใครอ่านได้ ใครเขียนได้บ้าง)
+        builder.SetReadAccessLevel(AccessLevel.Public); // ให้ปลั๊กอินอื่นอ่านได้
+        builder.SetWriteAccessLevel(AccessLevel.Vendor); // แต่ให้เฉพาะบริษัทที่ใช้ VendorId นี้เขียนได้เท่านั้น
+        builder.SetVendorId("PREMIX"); // ต้องตรงกับที่ตั้งไว้ในไฟล์ .addin
+        
+        builder.SetSchemaName("ColumnDesignData"); // ชื่อฐานข้อมูล
+
+        // 4. เพิ่มคอลัมน์ (Field) ลงในตาราง
+        // ฟิลด์เก็บตัวเลขค่า Double
+        FieldBuilder momentField = builder.AddSimpleField("MaxMoment", typeof(double));
+        momentField.SetDocumentation("เก็บค่าโมเมนต์ดัดสูงสุดรอบแกนหลัก"); // ใส่คำอธิบาย
+        // ระบุหน่วย (Revit 2022+ บังคับระบุ UnitTypeId)
+        momentField.SetSpec(SpecTypeId.StructuralMoment); 
+
+        // ฟิลด์เก็บข้อความ (Text) เช่น เก็บข้อมูล JSON หรือชื่อโปรแกรมวิเคราะห์
+        builder.AddSimpleField("AnalysisSoftware", typeof(string));
+
+        // 5. คอมไพล์ปิดตารางและลงทะเบียน
+        return builder.Finish();
+    }
+}
+```
+
+---
+
+## 3. การเขียนข้อมูลซ่อนลงในเสาต้นหนึ่ง (Write Entity)
+
+เมื่อเรามีโครงตาราง (Schema) ที่พร้อมใช้งานแล้ว เราจะสร้างก้อนข้อมูล (Entity) เพื่อบรรจุค่า และเอาไปฝังซ่อนไว้ใน Element ด้วยเมธอด `element.SetEntity()`
+
+```csharp title="การฝังข้อมูลลงในชิ้นงาน"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.ExtensibleStorage;
+
+public void SaveDataToColumn(Document doc, Element columnElement)
+{
+    // 1. ดึงโครงสร้างตาราง (Schema) ที่เราสร้างไว้
+    Schema schema = SchemaConfig.GetOrCreateSchema();
+
+    // 2. สร้างก้อนข้อมูล (Entity) 1 เรคคอร์ดตามแบบตารางนั้น
+    Entity entity = new Entity(schema);
+
+    // 3. หยอดข้อมูลลงไปตามชื่อคอลัมน์ (Field)
+    // การฝังค่า UnitTypeId ต้องแปลงหน่วยให้ตรงกับ SpecTypeId ที่กำหนดไว้ (StructuralMoment)
+    entity.Set("MaxMoment", 450.5); 
+    entity.Set("AnalysisSoftware", "ETABS v21");
+
+    // 4. นำก้อนข้อมูลไปแสตมป์ฝังไว้ในตัวเสา (ต้องทำภายใต้ Transaction)
+    using (Transaction trans = new Transaction(doc, "ฝังข้อมูลลงในเสา"))
+    {
+        trans.Start();
+        columnElement.SetEntity(entity);
+        trans.Commit();
+    }
+}
+```
+
+> [!TIP]
+> ข้อมูลที่ฝังลงไปด้วยวิธีนี้ จะไม่ไปโผล่ในหน้าจอ Properties Panel ผู้ใช้ปกติจะไม่เห็นและลบทิ้งไม่ได้ (Invisible) แต่ตัวเลขเหล่านี้จะเดินทางติดไปกับไฟล์ `.rvt` เสมอ!
+
+---
+
+## 4. การดึงข้อมูลลับออกมาอ่าน (Read Entity)
+
+ในทางกลับกัน เมื่อวิศวกรส่งไฟล์ Revit ต่อไปให้เพื่อน หรือเปิดไฟล์ขึ้นมาใหม่ในวันรุ่งขึ้น เราสามารถให้โค้ด C# วิ่งเข้าไปเปิดกระเป๋าลับเพื่อดึงข้อมูลเดิมกลับมาประมวลผลต่อได้
+
+```csharp title="การดึงข้อมูลลับที่ซ่อนอยู่ออกมา"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.ExtensibleStorage;
+using Autodesk.Revit.UI;
+
+public void ReadDataFromColumn(Element columnElement)
+{
+    // 1. ดึงโครงสร้างตารางอ้างอิง
+    Schema schema = SchemaConfig.GetOrCreateSchema();
+
+    // 2. ดึงก้อนข้อมูล (Entity) ออกมาจากเสาต้นนี้ (ถ้ามี)
+    Entity entity = columnElement.GetEntity(schema);
+
+    // เช็กก่อนว่ามีข้อมูลถูกแสตมป์ไว้หรือไม่
+    if (entity.IsValid())
+    {
+        // 3. อ่านค่าตามชื่อ Field และระบุชนิดข้อมูลกำกับ (Type Casting)
+        double moment = entity.Get<double>("MaxMoment");
+        string software = entity.Get<string>("AnalysisSoftware");
+
+        TaskDialog.Show("ผลการดึงข้อมูลลับ", 
+            $"เสาต้นนี้ถูกวิเคราะห์ด้วย: {software}\n" +
+            $"ค่า Max Moment = {moment}");
+    }
+    else
+    {
+        TaskDialog.Show("ผลการตรวจสอบ", "ไม่พบข้อมูลวิเคราะห์ฝังอยู่ในเสาต้นนี้!");
+    }
+}
+```
+
+:::warning[ข้อควรระวังในการออกแบบโครงสร้าง]
+ระบบ Extensible Storage เป็นระบบที่แข็งทื่อ (Strict) มาก **หากคุณประกาศ Schema ลงไปในไฟล์ Revit แล้ว คุณจะไม่สามารถแก้ไขเปลี่ยนชื่อตาราง หรือสั่งลบโครงสร้างตารางทิ้งได้อีกเลย!** 
+
+หากจำเป็นต้องแก้โครงสร้างตารางข้อมูลจริงๆ (เช่น อยากเพิ่ม Field ใหม่อีก 3 ตัว) คุณต้องสร้าง Schema อันใหม่โดยตั้งชื่อและ Guid ขึ้นมาใหม่ แล้วทำการเขียนโค้ดย้าย (Migrate) ข้อมูลจากของเก่าไปของใหม่ด้วยตัวคุณเองครับ
+:::

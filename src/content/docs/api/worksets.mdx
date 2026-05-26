@@ -76,15 +76,20 @@ public class WorksetFinder
 ```csharp title="การย้ายวัตถุเข้า Workset ใหม่"
 using Autodesk.Revit.DB;
 
-public void MoveElementToWorkset(Element element, WorksetId destinationWorksetId)
+public void MoveElementToWorkset(Document doc, Element element, WorksetId destinationWorksetId)
 {
     // 1. ดึงพารามิเตอร์ระบุ Workset ของตัววัตถุ
     Parameter worksetParam = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
 
     if (worksetParam != null && !worksetParam.IsReadOnly)
     {
-        // 2. เขียนข้อมูลด้วย integer ของ WorksetId ลงไปแทน
-        worksetParam.Set(destinationWorksetId.IntegerValue);
+        // 2. เขียนข้อมูลด้วย integer ของ WorksetId ลงไปแทน (ต้องทำภายใต้ Transaction)
+        using (Transaction trans = new Transaction(doc, "ย้าย Workset"))
+        {
+            trans.Start();
+            worksetParam.Set(destinationWorksetId.IntegerValue);
+            trans.Commit();
+        }
     }
 }
 ```

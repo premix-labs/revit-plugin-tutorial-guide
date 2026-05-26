@@ -1,0 +1,116 @@
+---
+title: การจัดการแจ้งเตือน (Failure API)
+description: ป้องกันปัญหาสคริปต์หยุดชะงักระหว่างการรันลูปขนาดใหญ่ เรียนรู้วิธีการลบเพิกเฉย (Suppress) หน้าต่าง Warning และ Error ของ Revit ด้วย IFailuresPreprocessor
+---
+
+ลองจินตนาการว่าคุณเขียนปลั๊กอิน (Auto-Rebarring) ให้สร้างเหล็กปลอก 1,000 เส้นลงในเสา แต่บังเอิญมีเหล็กอยู่ 1 เส้นที่สั้นเกินไปจน Revit รับไม่ได้ 
+
+แทนที่ปลั๊กอินจะสร้างเหล็กให้ครบ 999 เส้นที่เหลือ Revit จะเด้งหน้าต่างสีเหลืองขึ้นมา (Warning Dialog) แจ้งว่า "Line is too short" แล้วรอดูดำเนินการจากผู้ใช้ ซึ่งนั่นหมายความว่า **ลูปการทำงานอัตโนมัติของคุณจะหยุดชะงัก (Halt) ลงทันที!**
+
+ในฐานะนักพัฒนาระดับ Senior การจัดการหน้าต่างแจ้งเตือนพวกนี้คือหัวใจของการทำ **BIM Automation อย่างไร้รอยต่อ** ครับ
+
+---
+
+## 1. IFailuresPreprocessor คืออะไร?
+
+เมื่อคุณทำการดัดแปลงโมเดล (Commit Transaction) Revit จะมีตัวตรวจสอบหลังบ้านที่เรียกว่า **Failure Processing** เพื่อตรวจหาข้อผิดพลาด หากมีข้อผิดพลาด มันจะโยน **FailureMessage** ออกมา
+
+เราสามารถเขียนโค้ดเพื่อเข้าไป "แทรกแซง" กระบวนการนี้ล่วงหน้าได้ โดยการสร้างคลาสที่สืบทอดจาก Interface `IFailuresPreprocessor` เพื่อบอก Revit ว่า *"ถ้าเจอ Warning รบกวนช่วยลบทิ้งให้ที ไม่ต้องโชว์หน้าต่างหรอกนะ"*
+
+---
+
+## 2. การสร้างคลาสผู้คุมกฎ (Failure Handler)
+
+มาลองสร้างคลาสเงียบๆ ที่จะคอยปิดแจ้งเตือนทุกประเภทที่เป็นระดับคำเตือน (Warning) กันครับ:
+
+```csharp title="WarningSwallower.cs"
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+
+namespace RevitToolkit;
+
+// 1. สร้างคลาสสืบทอดจาก IFailuresPreprocessor
+public class WarningSwallower : IFailuresPreprocessor
+{
+    public FailureProcessingResult PreprocessFailures(FailuresAccessor accessor)
+    {
+        // 2. ดึงรายการข้อผิดพลาดทั้งหมดที่เกิดขึ้นใน Transaction นี้
+        IList<FailureMessageAccessor> failMessages = accessor.GetFailureMessages();
+
+        if (failMessages.Count == 0)
+        {
+            return FailureProcessingResult.Continue; // ถ้าไม่มีอะไรผิดปกติ ก็ให้ทำงานต่อไป
+        }
+
+        foreach (FailureMessageAccessor failure in failMessages)
+        {
+            // 3. ตรวจสอบระดับความรุนแรงของข้อผิดพลาด (Severity)
+            FailureSeverity severity = failure.GetSeverity();
+
+            if (severity == FailureSeverity.Warning)
+            {
+                // ถ้าเป็นแค่ "คำเตือน" (สีเหลือง) เราจะสั่งลบทิ้ง (Suppress) ทันที!
+                accessor.DeleteWarning(failure);
+            }
+            else if (severity == FailureSeverity.Error)
+            {
+                // ถ้าเป็น "ข้อผิดพลาดร้ายแรง" (สีแดง) ที่ Revit ไม่ยอมให้ผ่าน
+                // การกดลบเฉยๆ อาจทำให้โมเดลพังได้ ต้องจัดการแยกตามเคส (ในเบื้องต้นเราปล่อยผ่านก่อน)
+            }
+        }
+
+        // 4. คืนค่าให้ Revit ทำงานต่อไปหลังจัดการเสร็จแล้ว
+        return FailureProcessingResult.Continue;
+    }
+}
+```
+
+---
+
+## 3. การประกบ Handler เข้ากับ Transaction
+
+หลังจากที่เรามีตัวคุมกฎ (WarningSwallower) แล้ว เราต้องเอามันไป "เสียบ" เข้ากับ `Transaction` ก่อนที่เราจะสั่ง `Commit()` ครับ
+
+```csharp title="ตัวอย่างการเสียบใช้งานตอนเขียนข้อมูล"
+using System;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+public void AutoGenerateColumns(Document doc)
+{
+    using (Transaction trans = new Transaction(doc, "สร้างเสาอัตโนมัติ 1,000 ต้น"))
+    {
+        trans.Start();
+
+        // 1. ดึง Options การจัดการของ Transaction นี้ขึ้นมา
+        FailureHandlingOptions failureOptions = trans.GetFailureHandlingOptions();
+
+        // 2. เสียบตัวกำจัด Warning ของเราเข้าไป
+        failureOptions.SetFailuresPreprocessor(new WarningSwallower());
+
+        // 3. เซฟ Options กลับเข้าไปใน Transaction
+        trans.SetFailureHandlingOptions(failureOptions);
+
+        try
+        {
+            // ทำการวนลูปสร้างเสา 1,000 ต้น
+            for (int i = 0; i < 1000; i++)
+            {
+                // โค้ดสร้างเสา ...
+                // หากเสาต้นไหนเกิดชนกัน หรือสั้นไป มันจะถูกกลืน Warning หายวับไป
+            }
+
+            // 4. สั่ง Commit (ตอนนี้ Revit จะส่งข้อผิดพลาดไปให้ WarningSwallower จัดการเอง)
+            trans.Commit();
+        }
+        catch (Exception)
+        {
+            trans.RollBack();
+        }
+    }
+}
+```
+
+:::tip[ทำไมต้องจัดการ Failure?]
+การใช้ `IFailuresPreprocessor` ถือเป็นข้อบังคับกลายๆ (Best Practice) สำหรับการรันสคริปต์ขนาดใหญ่ หรือสคริปต์ที่ทำงานอยู่เบื้องหลัง (Background Tasks) โดยไม่มีผู้ใช้งานนั่งเฝ้าหน้าจอ (Headless Mode) การปล่อยให้หน้าต่าง Warning เด้งขึ้นมาจะทำให้โปรแกรมค้างคาและสูญเสียความเป็นระบบออโตเมชันครับ!
+:::

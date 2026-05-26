@@ -1,0 +1,129 @@
+---
+title: การสร้างก้อนวัตถุฟรีฟอร์ม (DirectShape)
+description: ปลดล็อกข้อจำกัดการปั้นโมเดล เรียนรู้วิธีแปลงรูปทรง Geometry หริอ Mesh ที่ซับซ้อนให้กลายเป็นวัตถุโครงสร้าง (Structural Framing) ใน Revit อย่างรวดเร็วด้วย DirectShape API
+---
+
+ในโปรเจ็กต์วิศวกรรมโครงสร้างที่มีความซับซ้อนสูง (เช่น โครงสร้างหลังคาพาราเมตริก, จุดต่อรอยเชื่อมเหล็ก Steel Connections ที่มีรูปร่างแปลกประหลาด) การมานั่งสร้าง Family ทีละชิ้นอาจจะเสียเวลาและไม่คุ้มค่า
+
+วิศวกรหลายคนจึงปั้นก้อนโมเดลเหล่านี้จากซอฟต์แวร์อื่น (เช่น Rhino, Grasshopper, หรือ Tekla) และคำถามคือ **"เราจะเอาเส้นเรขาคณิต (Geometry) หรือก้อน Mesh เหล่านี้ โยนเข้าไปใน Revit ให้มันกลายเป็นชิ้นงานโครงสร้าง (เช่น กลายเป็นหมวดหมู่ Structural Framing) ได้อย่างไรโดยไม่ต้องไปนั่งเปิดสร้าง Family?"**
+
+คำตอบของเรื่องนี้คือ **`DirectShape`** ครับ!
+
+---
+
+## 1. DirectShape คืออะไร?
+
+`DirectShape` ถูกสร้างขึ้นมาเพื่อเก็บข้อมูล 3D Geometry จากภายนอกโดยเฉพาะครับ มันคือชิ้นงานประเภทหนึ่งที่ยอมให้เรายัดก้อน `Solid` หรือ `Mesh` ดิบๆ ลงไป และเราสามารถ **"สวมหมวก Category"** ให้มันได้ทันที เช่น "ก้อน Solid อันนี้ ฉันขอให้มันทำตัวเป็นเสาโครงสร้าง (StructuralColumns) นะ"
+
+ข้อดีของการใช้ DirectShape:
+1. ทำงานรวดเร็ว ไม่ต้องมีกระบวนการ Load Family ให้วุ่นวาย
+2. ผูก Category โครงสร้างได้ ทำให้ไปโผล่ใน Schedule และถอดปริมาณ BOQ ร่วมกับเสาคานต้นอื่นๆ ได้ตามปกติ
+
+---
+
+## 2. การสร้าง Solid จากโค้ด
+
+ก่อนจะสร้าง DirectShape เราต้องมีรูปทรง (Geometry) ก่อนครับ ถ้าเราไม่ได้นำเข้าโมเดลจากภายนอก เราสามารถใช้ API กลุ่ม `GeometryCreationUtilities` สร้างก้อน Solid ทรงเรขาคณิตพื้นฐานขึ้นมาสดๆ ในโค้ดได้เลย
+
+```csharp title="การปั้นก้อน Solid ทรงกระบอก (Cylinder)"
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+
+public Solid CreateCylinderSolid(double radiusMeters, double heightMeters)
+{
+    // 1. สร้างเส้นโปรไฟล์วงกลมที่ฐาน
+    double r = UnitUtils.ConvertToInternalUnits(radiusMeters, UnitTypeId.Meters);
+    double h = UnitUtils.ConvertToInternalUnits(heightMeters, UnitTypeId.Meters);
+    
+    Arc circle = Arc.Create(new Plane(XYZ.BasisZ, XYZ.Zero), r, 0, 2 * Math.PI);
+    
+    // สร้าง Loop เส้นปิด 1 วง
+    CurveLoop profileLoop = new CurveLoop();
+    profileLoop.Append(circle);
+
+    // 2. ใช้คำสั่ง Extrude ยืดแผ่นวงกลมนั้นขึ้นไปตามแกน Z เป็นระยะ h 
+    Solid cylinderSolid = GeometryCreationUtilities.CreateExtrusionGeometry(
+        new List<CurveLoop> { profileLoop },
+        XYZ.BasisZ,
+        h
+    );
+
+    return cylinderSolid;
+}
+```
+
+---
+
+## 3. การสร้าง DirectShape ลงในโมเดล
+
+เมื่อเรามีก้อน `Solid` ในมือแล้ว การเสกให้มันไปโผล่ในหน้าต่าง 3D ของ Revit ในฐานะ **"คานโครงสร้าง (Structural Framing)"** ทำได้ง่ายนิดเดียวครับ:
+
+```csharp title="CreateDirectShapeCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CreateDirectShapeCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        using (Transaction trans = new Transaction(doc, "สร้างชิ้นงาน DirectShape"))
+        {
+            trans.Start();
+
+            try
+            {
+                // 1. เรียกฟังก์ชันสร้างก้อน Solid แบบโปรแกรมมิ่ง (เช่น รัศมี 0.5ม. สูง 3ม.)
+                Solid mySolid = CreateCylinderSolid(0.5, 3.0);
+
+                // นำก้อน Solid ยัดใส่ List (เพราะ DirectShape รับ Geometry ได้หลายชิ้นพร้อมกัน)
+                IList<GeometryObject> geoList = new List<GeometryObject> { mySolid };
+
+                // 2. กำหนด Category ให้วัตถุนี้ (สวมหมวกคานโครงสร้าง)
+                ElementId categoryId = new ElementId(BuiltInCategory.OST_StructuralFraming);
+
+                // 3. สร้าง DirectShape เปล่าๆ ขึ้นมาใน Document
+                DirectShape ds = DirectShape.CreateElement(doc, categoryId);
+
+                // 4. บรรจุเรขาคณิต (Geometry) ลงไปใน DirectShape
+                ds.SetShape(geoList);
+
+                // 5. ตั้งชื่อให้ผู้ใช้แยกแยะได้ง่ายใน Properties
+                ds.Name = "Custom Steel Connection";
+
+                trans.Commit();
+                
+                TaskDialog.Show("สำเร็จ", "สร้าง DirectShape หมวดหมู่คานสำเร็จแล้ว!");
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                trans.RollBack();
+                message = ex.Message;
+                return Result.Failed;
+            }
+        }
+    }
+
+    private Solid CreateCylinderSolid(double radius, double height)
+    {
+        // ... (โค้ดสร้าง Solid ตามหัวข้อด้านบน) ...
+        double r = UnitUtils.ConvertToInternalUnits(radius, UnitTypeId.Meters);
+        double h = UnitUtils.ConvertToInternalUnits(height, UnitTypeId.Meters);
+        CurveLoop profileLoop = new CurveLoop();
+        profileLoop.Append(Arc.Create(new Plane(XYZ.BasisZ, XYZ.Zero), r, 0, 2 * Math.PI));
+        return GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { profileLoop }, XYZ.BasisZ, h);
+    }
+}
+```
+
+:::warning[ข้อจำกัดสำคัญของ DirectShape]
+วัตถุที่เกิดจาก `DirectShape` จะ **ไม่เป็น Parametric** นะครับ! หมายความว่าเมื่อสร้างเสร็จแล้ว ผู้ใช้งานหน้าเครื่องจะไม่สามารถดึงลูกศรยืดหดความยาว หรือเปลี่ยนขนาดรัศมีในช่อง Properties ได้เหมือนคานปกติ ถือเป็นก้อนโมเดลที่แข็งทื่อ (Static Model) ที่เหมาะกับงานนำเข้า (Import) หรือรูปทรงที่คำนวณระยะตายตัวมาเรียบร้อยแล้วเท่านั้นครับ!
+:::

@@ -1,0 +1,122 @@
+---
+title: Analytical Model API (Revit 2023+)
+description: อัปเดตล่าสุดกับระบบ Analytical Model ยุคใหม่ แยกโมเดลสามมิติกับโมเดลโครงสร้างออกจากกันอย่างเด็ดขาด เตรียมส่งเข้าโปรแกรมวิเคราะห์อย่าง Robot หรือ ETABS
+---
+
+หากคุณเคยเขียนปลั๊กอินวิเคราะห์โครงสร้างในเวอร์ชันก่อน Revit 2023 คุณจะคุ้นเคยกับโมเดลที่เรียกว่า **Context-Driven Analytical Model** (ก้อนคอนกรีตอยู่ที่ไหน เส้นแกนจะซ่อนและวิ่งตามอยู่ที่นั่น) 
+
+แต่โลกเปลี่ยนไปแล้วครับ! ตั้งแต่ **Revit 2023** เป็นต้นมา Autodesk ได้ยกเครื่องระบบวิเคราะห์ใหม่ทั้งหมด เรียกว่า **"Context-Free Analytical Model"** ทำให้เส้นแกนวิเคราะห์ (Analytical Elements) สามารถถูกสร้างแก้ไขและขยับตำแหน่งได้เป็นอิสระ โดยไม่ต้องมีก้อนคอนกรีต 3D อยู่เลยก็ได้ครับ!
+
+บทนี้จะพาไปรู้จักกับ API ยุคใหม่ที่วิศวกรโครงสร้างทุกคนต้องรู้ครับ
+
+---
+
+## 1. Class หลักในระบบ Analytical Model
+
+ใน Namespace `Autodesk.Revit.DB.Structure` เราจะมีตัวละครใหม่เข้ามาแทนที่ระบบเดิมครับ:
+
+*   **`AnalyticalMember`**: เส้นแกนรับแรง 1 มิติ (แทน เสาโครงสร้าง, คานโครงสร้าง, และเหล็กค้ำยัน)
+*   **`AnalyticalPanel`**: แผ่นรับแรง 2 มิติ (แทน พื้นโครงสร้าง, และผนังรับแรงเฉือน)
+*   **`AnalyticalNode`**: จุดต่อรับแรง 0 มิติ (แทน จุดเชื่อมต่อที่ปลายเส้นแกนเพื่อส่งถ่ายแรง)
+*   **`AnalyticalToPhysicalAssociationManager`**: คลาสที่ทำหน้าที่เป็น "กาว" เชื่อมโยงความสัมพันธ์ระหว่างเสาคอนกรีต 3D จริงๆ กับเส้นแกน Analytical Member
+
+---
+
+## 2. การสร้าง Analytical Member (เส้นแกนเสา/คาน)
+
+ในการสร้างโมเดลส่งเข้าโปรแกรมวิเคราะห์ เรามักจะอ่านพิกัดจากไฟล์ Excel หรือซอฟต์แวร์นอก แล้วมาปั้นเป็นเส้นแกนโครงสร้างครับ 
+
+```csharp title="ตัวอย่างการสร้าง Analytical Member (เส้นแกนคาน)"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+
+public void CreateAnalyticalBeam(Document doc)
+{
+    // 1. สร้างเส้น Line ปกติ (สมมติคานยาว 5 เมตร)
+    XYZ startPoint = new XYZ(0, 0, 0);
+    XYZ endPoint = new XYZ(UnitUtils.ConvertToInternalUnits(5, UnitTypeId.Meters), 0, 0);
+    Curve beamCurve = Line.CreateBound(startPoint, endPoint);
+
+    // เปิด Transaction เพราะมีการสร้าง/แก้ไขโมเดล
+    using (Transaction trans = new Transaction(doc, "สร้าง Analytical Beam"))
+    {
+        trans.Start();
+
+        // 2. สั่งสร้างเส้น Analytical Member ลงในโมเดล
+        AnalyticalMember newMember = AnalyticalMember.Create(doc, beamCurve);
+
+        // 3. ปรับหมวดหมู่พฤติกรรม (StructuralRole) ให้ทำหน้าที่เป็น "คาน" (Beam)
+        newMember.StructuralRole = AnalyticalStructuralRole.StructuralRoleBeam;
+
+        // 4. (ออปชันเสริม) กำหนดหน้าตัดให้เส้นแกนนี้ (Section)
+        // newMember.SectionType = yourFamilySymbolId;
+
+        trans.Commit();
+    }
+}
+```
+
+---
+
+## 3. การสร้างความสัมพันธ์ (Association) กลับไปที่โมเดล 3D จริง
+
+สมมติว่าวิศวกรทำการวาดเสา 3D (Physical Element) ไว้แล้ว แต่ยังไม่มีเส้นแกน Analytical เราสามารถใช้โค้ดสร้างเส้นแกน แล้วเอาไป "ผูก" กับเสาต้นนั้นได้ครับ เมื่อเสาโดนขยับ โปรแกรมจะได้รู้ว่าสองตัวนี้คือของสิ่งเดียวกัน
+
+```csharp title="การผูก Physical เข้ากับ Analytical"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+
+public void AssociateAnalyticalToPhysical(Document doc, Element physicalCol, AnalyticalMember analyticalCol)
+{
+    // 1. เรียกใช้งาน Manager ที่ดูแลความสัมพันธ์
+    var assocManager = AnalyticalToPhysicalAssociationManager.GetAnalyticalToPhysicalAssociationManager(doc);
+
+    if (assocManager != null)
+    {
+        // 2. เช็กก่อนว่าเสา 3D นี้เคยผูกกับใครไว้หรือยัง
+        if (!assocManager.HasAssociation(physicalCol.Id))
+        {
+            // เปิด Transaction ก่อนแก้ไขข้อมูล Association
+            using (Transaction trans = new Transaction(doc, "ผูก Analytical กับ Physical"))
+            {
+                trans.Start();
+                // 3. สั่งผูก (Add Association) เข้าด้วยกัน
+                assocManager.AddAssociation(analyticalCol.Id, physicalCol.Id);
+                trans.Commit();
+            }
+        }
+    }
+}
+```
+
+:::note[ประโยชน์ของการตัดขาดระบบ 3D กับ Analytical]
+ในอดีต ถ้านักสถาปนิกเผลอลบเสาคอนกรีต 3D ทิ้ง เส้นแกน Analytical จะหายไปด้วย ทำให้โมเดลรันโครงสร้างไม่ได้! ปัจจุบันเมื่อมันแยกกัน (Context-Free) ต่อให้เสาคอนกรีต 3D ถูกลบทิ้ง เส้น Analytical Member ก็ยังคงอยู่และทำงานรับแรงต่อได้ตามปกติในฝั่งโมเดลวิเคราะห์ครับ!
+:::
+
+---
+
+## 4. การจัดการ Analytical Nodes (จุดต่อโครงสร้าง)
+
+โปรแกรมพวก SAP2000 หรือ ETABS จะใช้ **Nodes** ในการจับเส้นต่างๆ มาชนกันเพื่อส่งถ่ายโมเมนต์และแรงเฉือน การตรวจสอบว่าเส้นแกนต่างๆ ต่อชนจุดเดียวกัน (Node เดียวกัน) หรือไม่ เป็นสิ่งสำคัญมากในการทำโมเดลส่งไปรันให้ผ่าน
+
+ในระบบใหม่ เมื่อคุณสร้าง `AnalyticalMember` ปลายทั้งสองข้างของมันจะไม่สร้าง Node ขึ้นมาให้โดยอัตโนมัติ (แต่โปรแกรมมีระบบ Auto-Detect ให้มองเห็นว่าเชื่อมกัน) อย่างไรก็ตาม เราสามารถดึง Node หรือบังคับสร้าง Node ออกมาเขียนข้อมูลเชิงลึก (เช่น ใส่ Support อิง Node) ได้ครับ
+
+```csharp title="การหาพิกัด Node ปลายทางของชิ้นส่วน"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.UI;
+
+public void CheckMemberNodes(AnalyticalMember member)
+{
+    // ดึงเส้นกราฟิกที่ซ่อนอยู่ภายใน
+    Curve curve = member.GetCurve();
+    
+    // ดึงพิกัดจุดเริ่มต้น และจุดปลาย
+    XYZ startPoint = curve.GetEndPoint(0);
+    XYZ endPoint = curve.GetEndPoint(1);
+
+    TaskDialog.Show("Nodes", 
+        $"Start: {startPoint.X}, {startPoint.Y}, {startPoint.Z}\n" +
+        $"End: {endPoint.X}, {endPoint.Y}, {endPoint.Z}");
+}
+```

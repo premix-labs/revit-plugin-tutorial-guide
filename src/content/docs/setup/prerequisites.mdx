@@ -1,13 +1,13 @@
 ---
 title: เตรียมเครื่อง
-description: สิ่งที่ต้องมีบน Windows ก่อนเริ่มสร้าง Revit 2026 plugin
+description: สิ่งที่ต้องมีบน Windows ก่อนเริ่มสร้าง Revit 2026/2027 plugin
 ---
 
 ## ซอฟต์แวร์ที่ต้องติดตั้ง
 
 - `Visual Studio 2022`
-- `.NET 8 SDK`
-- `Revit 2026`
+- `.NET 8 SDK` (สำหรับ Revit 2025-2026) หรือ `.NET 10 SDK` (สำหรับ Revit 2027+)
+- `Revit 2026` (หรือ 2027)
 
 ## ตำแหน่งที่ต้องรู้
 
@@ -22,10 +22,10 @@ C:\Program Files\Autodesk\Revit 2026\
 - `RevitAPI.dll`
 - `RevitAPIUI.dll`
 
-## ทำไมต้องใช้ .NET 8
+## ทำไมต้องใช้ .NET 8 (และ .NET 10)
 
-Revit 2026 รันบน runtime ชุดนี้ ดังนั้น plugin ใหม่ควร target เป็น `net8.0-windows` ไม่ใช่ `net10.0` และไม่ใช่ `.NET Framework 4.8`
-
+Revit 2026 รันบน Runtime ของ .NET 8 ดังนั้น plugin ที่สร้างสำหรับ 2026 ควร Target เป็น `net8.0-windows`
+แต่หากคุณอัปเกรดไปใช้ **Revit 2027** ระบบภายในได้ขยับสถาปัตยกรรมไปใช้ .NET 10 คุณจึงต้องเปลี่ยน Target ไปเป็น `net10.0-windows` แทน
 :::note
 ถ้าคุณต้องรองรับ Revit คนละ major version ให้แยก target ตามเวอร์ชัน Revit อย่าฝืนใช้ target เดียวครอบทั้งหมด
 :::

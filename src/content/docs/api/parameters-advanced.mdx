@@ -188,15 +188,20 @@ public class CreateStructuralParameterCommand : IExternalCommand
 ```csharp title="ตัวอย่างการเซ็ตค่า Concrete Strength ให้กับเสา"
 using Autodesk.Revit.DB;
 
-public void SetConcreteStrength(Element element, string concreteGradeValue)
+public void SetConcreteStrength(Document doc, Element element, string concreteGradeValue)
 {
     // ค้นหาพารามิเตอร์จากชื่อที่เราตั้งไว้
     Parameter concreteParam = element.LookupParameter("Concrete_Strength_FC");
 
     if (concreteParam != null && !concreteParam.IsReadOnly)
     {
-        // ทำการเขียนข้อมูลค่าใหม่ลงไป (กรณีข้อมูลชนิด String)
-        concreteParam.Set(concreteGradeValue); // เช่น "SD40", "C350"
+        // ทำการเขียนข้อมูลค่าใหม่ลงไป (ต้องทำภายใต้ Transaction)
+        using (Transaction trans = new Transaction(doc, "ตั้งค่ากำลังคอนกรีต"))
+        {
+            trans.Start();
+            concreteParam.Set(concreteGradeValue); // เช่น "SD40", "C350"
+            trans.Commit();
+        }
     }
 }
 ```

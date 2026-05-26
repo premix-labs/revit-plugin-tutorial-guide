@@ -1,0 +1,137 @@
+---
+title: ระบบตรวจจับการชน (Clash Detection)
+description: เปิดโหมดการชน (Boolean Operations) เพื่อตรวจสอบว่ามีท่อแอร์ ท่อน้ำ หรือสถาปัตยกรรมใดวิ่งทะลุคานหรือเสาโครงสร้างของเราหรือไม่!
+---
+
+หน้าที่คลาสสิกของวิศวกรโครงสร้างเวลาคุยกับทีมงานระบบ (MEP) หรือสถาปนิก คือการตรวจสอบและเคลียร์แบบว่า **"มีท่อวิ่งทะลุคานตรงไหนไหม?"** (Clash Detection) 
+
+การใช้โปรแกรมอย่าง Navisworks นั้นทำได้ดี แต่ถ้าเราเขียนปลั๊กอินตรวจจับด้วยตัวเองผ่าน Revit API เราจะสามารถบอกให้ปลั๊กอิน "เจาะรูคาน (Opening) อัตโนมัติ" ในตำแหน่งที่เกิดการชนได้ทันทีโดยไม่ต้องเปลี่ยนซอฟต์แวร์ครับ!
+
+เบื้องหลังของเวทมนตร์นี้คือระบบเรขาคณิตที่เรียกว่า **`BooleanOperationsUtils`** ครับ
+
+---
+
+## 1. Boolean Operations คืออะไร?
+
+ในทางคณิตศาสตร์ 3D (Solid Geometry) การทำ Boolean คือการเอาก้อนเนื้อวัตถุ 2 ก้อนมาทำปฏิกิริยากัน ซึ่งใน Revit API จะมีโหมดหลักๆ ดังนี้:
+*   **`BooleanType.Union`**: รวมก้อน 2 ก้อนเข้าด้วยกันเป็นก้อนเดียว
+*   **`BooleanType.Difference`**: เอาก้อนที่ 1 ตั้ง ลบด้วยเนื้อของก้อนที่ 2 (การเจาะรู)
+*   **`BooleanType.Intersect`**: หาส่วนที่ "ทับซ้อนกัน" ระหว่างก้อนที่ 1 และก้อนที่ 2 (นี่คือคีย์เวิร์ดของการทำ **Clash Detection**)
+
+---
+
+## 2. วิธีเขียนโค้ดหาการชนกัน (Intersect)
+
+หลักการทำงานคือ:
+1. ดึงก้อน Solid ของชิ้นงานแรก (เช่น คาน) ออกมา
+2. ดึงก้อน Solid ของชิ้นงานที่สอง (เช่น ท่อ Pipe) ออกมา
+3. สั่งทำ `ExecuteBooleanOperation(Solid1, Solid2, BooleanType.Intersect)`
+4. ถ้าผลลัพธ์ที่ได้ออกมา **มีปริมาตร (Volume > 0)** แปลว่ามันชนกัน! แต่ถ้าปริมาตรเป็น 0 หรือว่างเปล่า แปลว่ามันรอด!
+
+```csharp title="ClashDetectorCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ClashDetectorCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        try
+        {
+            // 1. ดึงชิ้นงานคานโครงสร้างมา 1 ต้น (สมมติว่าเป็น ID 12345)
+            // ในการใช้งานจริงคุณอาจใช้ PickObject ให้ผู้ใช้คลิกเลือก
+            ElementId beamId = new ElementId(12345);
+            Element beam = doc.GetElement(beamId);
+
+            // 2. ดึงชิ้นงานท่อ (Pipe) หรือ Duct มา 1 ชิ้น (สมมติว่าเป็น ID 67890)
+            ElementId pipeId = new ElementId(67890);
+            Element pipe = doc.GetElement(pipeId);
+
+            // 3. สกัดเอาก้อน Solid ออกมาจากชิ้นงานทั้งสอง
+            Solid beamSolid = GetSolidFromElement(beam);
+            Solid pipeSolid = GetSolidFromElement(pipe);
+
+            if (beamSolid == null || pipeSolid == null)
+            {
+                TaskDialog.Show("Error", "ไม่สามารถดึงรูปทรง 3D ออกจากชิ้นงานได้");
+                return Result.Cancelled;
+            }
+
+            // 4. ทำการตรวจจับการชนด้วย Intersect
+            Solid intersectionSolid = BooleanOperationsUtils.ExecuteBooleanOperation(
+                beamSolid, 
+                pipeSolid, 
+                BooleanOperationsType.Intersect
+            );
+
+            // 5. ตรวจสอบปริมาตรเนื้อที่ทับซ้อนกัน
+            if (intersectionSolid != null && intersectionSolid.Volume > 0)
+            {
+                // แปลงหน่วยเป็นลูกบาศก์มิลลิเมตร (เพื่อความเข้าใจง่าย)
+                double clashVolMm3 = UnitUtils.ConvertFromInternalUnits(
+                    intersectionSolid.Volume, 
+                    UnitTypeId.CubicMillimeters
+                );
+
+                TaskDialog.Show("🔥 ตรวจพบการชน (CLASH)!", 
+                    $"ท่อทะลุคานครับ!\nมีปริมาตรการชนเท่ากับ: {clashVolMm3:F0} ลบ.มม.");
+            }
+            else
+            {
+                TaskDialog.Show("✅ ปลอดภัย", "ชิ้นงานทั้งสองไม่ได้สัมผัสหรือชนกันเลยครับ");
+            }
+
+            return Result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return Result.Failed;
+        }
+    }
+
+    // ฟังก์ชันช่วย: งัดแงะเอาก้อน Solid ออกมาจากตัว Element
+    private Solid GetSolidFromElement(Element elem)
+    {
+        Options geomOptions = new Options();
+        geomOptions.ComputeReferences = true; // ดึงข้อมูลอ้างอิงของหน้าตัดมาด้วย
+        geomOptions.DetailLevel = ViewDetailLevel.Fine; // เอาความละเอียดสูงสุด
+
+        GeometryElement geomElem = elem.get_Geometry(geomOptions);
+        if (geomElem == null) return null;
+
+        foreach (GeometryObject geomObj in geomElem)
+        {
+            if (geomObj is Solid solid && solid.Volume > 0)
+            {
+                return solid; // เจอ Solid ก้อนแรกที่มีเนื้อ ก็คืนค่าเลย
+            }
+            else if (geomObj is GeometryInstance geomInst)
+            {
+                // ถ้าเป็น Family Instance มันอาจจะซ่อน Solid ไว้ในก้อน Instance อีกชั้น
+                GeometryElement instGeom = geomInst.GetInstanceGeometry();
+                foreach (GeometryObject instObj in instGeom)
+                {
+                    if (instObj is Solid instSolid && instSolid.Volume > 0)
+                    {
+                        return instSolid;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+}
+```
+
+:::tip[ทำไมต้องหา Intersection Volume?]
+บ่อยครั้งที่กล่องคลุมวัตถุ (BoundingBox) ของวัตถุ 2 ชิ้นซ้อนทับกัน แต่วัตถุจริงๆ ที่อยู่ข้างในอาจจะแค่เฉียดๆ กัน การใช้ `BooleanOperationsUtils` เป็นวิธีเดียวที่การันตีผลลัพธ์ **100% ว่าเนื้อวัตถุ 3D ชนกันจริงๆ หรือไม่** ถือเป็นเทคนิคขั้นสุดยอดของการเขียนปลั๊กอินระดับ Senior เลยครับ!
+:::
