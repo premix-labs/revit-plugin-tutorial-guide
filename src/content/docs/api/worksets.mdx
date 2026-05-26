@@ -1,0 +1,224 @@
+---
+title: การจัดการ Worksets (Workset API)
+description: จัดการระบบทำงานร่วมกันแบบผู้ใช้หลายคน เรียนรู้วิธีการเขียนโค้ดตรวจค้น เปลี่ยน และสร้าง Workset ใหม่เพื่อจัดระเบียบโมเดลโครงสร้างให้ถูกสุขลักษณะ BIM อัตโนมัติ
+---
+
+เมื่อวิศวกรโครงสร้างทำงานในโครงการขนาดใหญ่ที่มีทีมงานหลายคนช่วยกันเขียนแบบพร้อมกัน ตัวโปรเจ็กต์จะถูกเปิดใช้งานระบบที่เรียกว่า **Worksharing (การแชร์ไฟล์ทำงานร่วมกันผ่านเซิร์ฟเวอร์หรือคลาวด์)** 
+
+และหัวใจในการจัดสรรแยกความรับผิดชอบของชิ้นงานรวมถึงการเพิ่มความเร็วการเปิดมุมมอง คือการแบ่งวัตถุต่างๆ ออกเป็นหมวดย่อยที่เรียกว่า **"Worksets"** (เช่น เสาโครงสร้างอยู่ใน Workset `STR_Columns`, คานอยู่ใน `STR_Framing`, และฐานรากอยู่ใน `STR_Foundations`)
+
+ทว่าในโลกความเป็นจริง ผู้ใช้งานมักเผลอวาดชิ้นงานโดยลืมสลับสวิตช์ Workset ให้ถูกต้อง ทำให้โมเดลปะปนสะเปะสะปะ การเขียนปลั๊กอินตรวจสอบและจัดกลุ่ม Workset โครงสร้างโดยอัตโนมัติจึงช่วยรักษามาตรฐานและลดเวลาเคลียร์แบบได้มหาศาลครับ!
+
+---
+
+## 1. การทำงานของ Worksharing ใน Revit API
+
+ก่อนจะเรียกใช้งานเกี่ยวกับ Workset ในโค้ด เราต้องตรวจสอบให้แน่ใจก่อนว่าโปรเจ็กต์ปัจจุบันมีการเปิดใช้งานระบบ Worksharing หรือยัง ผ่านพร็อพเพอร์ตี้ **`doc.IsWorkshared`**
+
+```csharp title="การเช็กสถานะ Worksharing"
+using Autodesk.Revit.DB;
+
+if (!doc.IsWorkshared)
+{
+    TaskDialog.Show("แจ้งเตือน", "โมเดลนี้ยังไม่ได้เปิดใช้ระบบ Worksharing (ไม่มี Worksets ในโปรเจ็กต์)");
+    return;
+}
+```
+
+ถ้าโมเดลมีการเปิดใช้งานระะบบแชร์ทำงานร่วมกัน ข้อมูล Workset ทั้งหมดจะถูกลงทะเบียนเก็บอยู่ในตารางส่วนกลางที่เรียกว่า **`WorksetTable`** ซึ่งเราสามารถดึงข้อมูลได้ผ่านคำสั่ง `doc.GetWorksetTable()` ครับ
+
+---
+
+## 2. การค้นหาและรายชื่อ Worksets ทั้งหมดในโมเดล
+
+หากต้องการรายชื่อของ Workset ทั้งหมดที่มีอยู่ในไฟล์ในปัจจุบันเพื่อตรวจสอบหรือเปรียบเทียบชื่อ เราจะใช้ Class ค้นหาพิเศษที่เรียกว่า **`FilteredWorksetCollector`**
+
+```csharp title="Command.cs — ดึงรายชื่อ Workset ทั้งหมดในโมเดล"
+using System.Text;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+public class WorksetFinder
+{
+    public void ShowAllWorksets(Document doc)
+    {
+        if (!doc.IsWorkshared) return;
+
+        // 1. สร้างตัวรวบรวมข้อมูลระดับ Workset
+        FilteredWorksetCollector worksetCollector = new FilteredWorksetCollector(doc);
+        
+        // กรองเอาเฉพาะข้อมูล Workset ที่ผู้ใช้สร้างขึ้นมาเอง (User Created Worksets)
+        worksetCollector.OfKind(WorksetKind.UserWorkset);
+
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine("📋 รายชื่อ Worksets ในโมเดล:");
+
+        foreach (Workset ws in worksetCollector)
+        {
+            sb.AppendLine($"- {ws.Name} (Id: {ws.Id})");
+        }
+
+        TaskDialog.Show("Workset รายงาน", sb.ToString());
+    }
+}
+```
+
+---
+
+## 3. การอ่านและเปลี่ยนย้าย Workset ให้กับวัตถุ
+
+วัตถุทุกตัว (Element) ในโปรเจ็กต์ที่มี Worksharing จะเก็บค่าไอดีของ Workset ที่ตัวเองสังกัดไว้ในพร็อพเพอร์ตี้ **`.WorksetId`**
+
+แต่ถ้าเราต้องการ **"แก้ไขหรือเปลี่ยนย้าย"** หมวดหมู่ Workset ให้กับชิ้นงานนั้นด้วยโค้ด วิธีการทำงานจะไม่ใช่การเข้าไปตั้งค่าให้ตัวแปร `.WorksetId` ตรงๆ ครับ แต่เราต้องเข้าผ่าน Parameter ซ่อนเฉพาะที่มีชื่อว่า **`ELEM_PARTITION_PARAM`** (เป็นแบบ Integer พารามิเตอร์ที่เก็บไอดีของ Workset ของตัววัตถุ)
+
+```csharp title="การย้ายวัตถุเข้า Workset ใหม่"
+using Autodesk.Revit.DB;
+
+public void MoveElementToWorkset(Element element, WorksetId destinationWorksetId)
+{
+    // 1. ดึงพารามิเตอร์ระบุ Workset ของตัววัตถุ
+    Parameter worksetParam = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+
+    if (worksetParam != null && !worksetParam.IsReadOnly)
+    {
+        // 2. เขียนข้อมูลด้วย integer ของ WorksetId ลงไปแทน
+        worksetParam.Set(destinationWorksetId.IntegerValue);
+    }
+}
+```
+
+---
+
+## 4. ตัวอย่างจริง: ปลั๊กอิน Auto-Sort คัดแยกชิ้นส่วนโครงสร้างเข้าสู่ Workset ที่ถูกต้อง
+
+ในโมเดลโครงสร้างที่ดี เราควรแยกแยะ เสา คาน และฐานราก ออกจากกันอย่างเป็นระบบเพื่อสะดวกต่อการคัดกรองแบบ ปลั๊กอินตัวนี้จะทำหน้าที่:
+1. ค้นหาชิ้นส่วนคอนกรีต เสา, คาน, ฐานราก ทั้งโมเดล
+2. ตรวจสอบว่าในไฟล์มี Workset ปลายทางชื่อ `STR_Columns`, `STR_Framing`, `STR_Foundations` หรือไม่ ถ้าไม่มีให้ **เขียนโค้ดสั่งสร้างขึ้นมาใหม่แบบไดนามิก**
+3. ย้ายชิ้นส่วนของเสา คาน และฐานรากโครงสร้างนั้นๆ ไปอยู่ภายใต้ Workset ที่เหมาะสมให้อัตโนมัติในทันที!
+
+```csharp title="AutoSortStructuralWorksetsCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class AutoSortStructuralWorksetsCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        // 1. ตรวจเช็กระบบการแชร์โมเดล
+        if (!doc.IsWorkshared)
+        {
+            TaskDialog.Show("ยกเลิก", "โปรเจ็กต์นี้ไม่ได้ใช้งานระบบ Worksharing กรุณาเปิดแชร์ไฟล์ก่อนรันคำสั่ง");
+            return Result.Cancelled;
+        }
+
+        using (Transaction trans = new Transaction(doc, "จัดกลุ่มและคัดแยก Workset โครงสร้าง"))
+        {
+            trans.Start();
+
+            try
+            {
+                // 2. ค้นหาหรือสร้าง Worksets ปลายทาง
+                WorksetId colWsId = GetOrCreateWorkset(doc, "STR_Columns");
+                WorksetId frameWsId = GetOrCreateWorkset(doc, "STR_Framing");
+                WorksetId fndWsId = GetOrCreateWorkset(doc, "STR_Foundations");
+
+                int movedColumns = 0;
+                int movedFraming = 0;
+                int movedFoundations = 0;
+
+                // 3. ดึงชิ้นงานเสา คาน ฐานรากทั้งหมดขึ้นมาเตรียมย้าย
+                var colList = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_StructuralColumns).WhereElementIsNotElementType().ToElements();
+                var frameList = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_StructuralFraming).WhereElementIsNotElementType().ToElements();
+                var fndList = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_StructuralFoundation).WhereElementIsNotElementType().ToElements();
+
+                // 4. วนลูปย้ายเสาโครงสร้าง
+                foreach (Element col in colList)
+                {
+                    if (col.WorksetId != colWsId)
+                    {
+                        Parameter param = col.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+                        param?.Set(colWsId.IntegerValue);
+                        movedColumns++;
+                    }
+                }
+
+                // 5. วนลูปย้ายคานโครงสร้าง
+                foreach (Element frame in frameList)
+                {
+                    if (frame.WorksetId != frameWsId)
+                    {
+                        Parameter param = frame.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+                        param?.Set(frameWsId.IntegerValue);
+                        movedFraming++;
+                    }
+                }
+
+                // 6. วนลูปย้ายฐานรากโครงสร้าง
+                foreach (Element fnd in fndList)
+                {
+                    if (fnd.WorksetId != fndWsId)
+                    {
+                        Parameter param = fnd.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+                        param?.Set(fndWsId.IntegerValue);
+                        movedFoundations++;
+                    }
+                }
+
+                trans.Commit();
+
+                string report = $"คัดแยก Worksets โครงสร้างเรียบร้อยแล้ว!\n" +
+                                $"---------------------------------------\n" +
+                                $"✅ เสา (STR_Columns): ย้ายแล้ว {movedColumns} ชิ้น\n" +
+                                $"✅ คาน (STR_Framing): ย้ายแล้ว {movedFraming} ชิ้น\n" +
+                                $"✅ ฐานราก (STR_Foundations): ย้ายแล้ว {movedFoundations} ชิ้น";
+                
+                TaskDialog.Show("ผลการตรวจสอบจัดกลุ่ม", report);
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                trans.RollBack();
+                message = ex.Message;
+                return Result.Failed;
+            }
+        }
+    }
+
+    // ฟังก์ชันช่วยตรวจสอบรายชื่อ และสร้าง Workset หากไม่พบล่วงหน้า
+    private WorksetId GetOrCreateWorkset(Document doc, string worksetName)
+    {
+        WorksetTable worksetTable = doc.GetWorksetTable();
+        
+        // กรองตรวจสอบว่าชื่อนี้เคยถูกสร้างไว้หรือยัง
+        FilteredWorksetCollector collector = new FilteredWorksetCollector(doc).OfKind(WorksetKind.UserWorkset);
+        
+        foreach (Workset ws in collector)
+        {
+            if (ws.Name.Equals(worksetName, StringComparison.OrdinalIgnoreCase))
+            {
+                return ws.Id; // พบชื่อเดิม คืนค่าไอดีเดิมได้เลย
+            }
+        }
+
+        // หากไม่พบชื่อเดิม ทำการสร้างและเปิดใช้งาน Workset ใหม่
+        Workset newWorkset = Workset.Create(doc, worksetName);
+        return newWorkset.Id;
+    }
+}
+```
+
+:::warning[สิทธิ์การใช้งานชิ้นงาน (Workset Checkout & Ownership)]
+เมื่อเปิดระบบ Worksharing หากมีชิ้นงานใดชิ้นงานหนึ่งกำลังถูกแก้ไขหรือครอบครองสิทธิ์การเขียนโดยสมาชิกในทีมคนอื่น (Elements owned by other users) ปลั๊กอินของคุณจะไม่สามารถสั่งแก้ไขหรือเปลี่ยนแปลง Workset ให้กับวัตถุชิ้นนั้นๆ ได้ และจะโยนข้อผิดพลาดออกมา 
+
+ดังนั้นในการรันเขียนข้อมูลบนโปรเจ็กต์ขนาดใหญ่ ควรดักเขียนคำสั่งตรวจสอบความปลอดภัยผ่านเมธอด `WorksharingUtils.GetCheckoutStatus(doc, elementId)` หรือจัดการดักจับ Exception ป้องกันโปรเจ็กต์หยุดทำงานครึ่งๆ กลางๆ เสมอครับ
+:::

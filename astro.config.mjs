@@ -48,6 +48,31 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Selection & Interaction',
+					items: [
+						{ label: 'การเลือกชิ้นส่วนโครงสร้าง (Selection API)', slug: 'api/selection-api' },
+					],
+				},
+				{
+					label: 'Parameters & Data Management',
+					items: [
+						{ label: 'พารามิเตอร์ขั้นสูง (Parameters API)', slug: 'api/parameters-advanced' },
+					],
+				},
+				{
+					label: 'Advanced Collaboration',
+					items: [
+						{ label: 'การดึงโมเดลข้ามลิงก์ (Linked Models)', slug: 'api/linked-models' },
+						{ label: 'การจัดการ Worksets (Workset API)', slug: 'api/worksets' },
+					],
+				},
+				{
+					label: 'Structural Takeoffs',
+					items: [
+						{ label: 'ตารางถอดแบบและปริมาณ (Schedule API)', slug: 'api/schedule-api' },
+					],
+				},
+				{
 					label: 'Geometry & Spatial API',
 					items: [
 						{ label: 'พิกัดและตำแหน่ง (XYZ & BoundingBox)', slug: 'api/geometry-api' },

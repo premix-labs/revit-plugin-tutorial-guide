@@ -1,0 +1,204 @@
+---
+title: ตารางถอดแบบและปริมาณงาน (Schedule API)
+description: เรียนรู้การเขียนโค้ดสร้างตาราง ViewSchedule แบบอัตโนมัติ เพิ่มคอลัมน์ข้อมูล (ScheduleFields) จัดระเบียบการกรองและหาผลรวมปริมาตรคอนกรีตเสาและโครงสร้างแบบคลิกเดียวจบ
+---
+
+ผลลัพธ์ที่เป็นตัวเลข เช่น ปริมาตรคอนกรีตเสา คาน ฐานราก ทั้งหมดในโมเดล หรือจำนวนน้ำหนักเหล็กเส้นเสริมคอนกรีต เป็นข้อมูลที่มีมูลค่าทางการเงินสูงที่สุดในกระบวนการจัดทำราคากลาง **BOQ (Bill of Quantities)** และการสั่งซื้อวัสดุเข้าหน้างานก่อสร้าง 
+
+Revit ขึ้นชื่อเรื่องการทำตารางปริมาณงาน (Schedules) ที่แม่นยำอยู่แล้ว แต่ในฐานะนักพัฒนาปลั๊กอิน หากเราสามารถรันสคริปต์ C# เพียงคลิกเดียวเพื่อ **"สร้าง ปรับแต่ง จัดเรียงฟิลด์ และสรุปผลตารางโครงสร้างทั้งหมดให้ออกมาเป็นมาตรฐานเดียวกัน"** ได้ทันที จะช่วยประหยัดเวลาและลดความผิดพลาดจากฝีมือคนทำโมเดลได้มหาศาลครับ!
+
+---
+
+## 1. ตาราง Schedule คืออะไรใน Revit API?
+
+ในโครงสร้างภายในของ Revit ตารางถอดแบบ Schedule ถือเป็นหน้ามองเห็น (View) รูปแบบหนึ่ง โดยสืบทอดคุณสมบัติมาจาก Class พื้นฐาน `View` ภายใต้ชื่อ Class ว่า **`ViewSchedule`**
+
+เราสามารถสั่งสร้างตารางคำนวณปริมาณงานเปล่าขึ้นมาใหม่ได้ โดยระบุว่าต้องการจะให้ถอดแบบชิ้นงานหมวดหมู่ (Category) ใด เช่น:
+
+```csharp title="การสร้างตาราง Schedule ใหม่"
+using Autodesk.Revit.DB;
+
+// สร้างตารางสำหรับหมวดหมู่เสาโครงสร้าง (OST_StructuralColumns)
+ElementId categoryId = new ElementId(BuiltInCategory.OST_StructuralColumns);
+ViewSchedule schedule = ViewSchedule.CreateSchedule(doc, categoryId);
+
+// ตั้งชื่อให้กับตารางถอดแบบ
+schedule.Name = "ตารางถอดแบบเสาโครงสร้าง";
+```
+
+---
+
+## 2. การเลือกคอลัมน์ข้อมูล (Schedule Fields)
+
+ตารางที่สร้างขึ้นมาตอนแรกจะยังไม่มีแถวหรือคอลัมน์ใดๆ ปรากฏขึ้นมาเลย เปรียบเหมือนตารางที่ไม่มีฟิลด์ข้อมูล เราจำเป็นต้องระบุนิยามตารางผ่าน **`ScheduleDefinition`** ซึ่งทำหน้าที่ควบคุมโครงสร้างตารางหลังบ้านทั้งหมด
+
+ขั้นตอนการเพิ่มคอลัมน์ข้อมูล (เช่น Family, Type, Volume) ลงในตาราง:
+1. ค้นหาฟิลด์ทั้งหมดที่ Revit อนุญาตให้ดึงมาแสดงผลได้ในหมวดหมู่นั้นๆ (**`GetSchedulableFields()`**)
+2. คัดเลือกฟิลด์ที่เราต้องการนำไปสร้างคอลัมน์
+3. สั่งแอดฟิลด์นั้นๆ ลงตารางเพื่อเป็นคอลัมน์ (**`AddField()`**)
+
+```csharp title="การค้นหาและเพิ่มคอลัมน์ลงในตาราง"
+ScheduleDefinition definition = schedule.Definition;
+
+// ดึงรายการฟิลด์ที่เป็นไปได้ทั้งหมดของหมวดหมู่นี้
+IList<SchedulableField> schedulableFields = definition.GetSchedulableFields();
+
+foreach (SchedulableField field in schedulableFields)
+{
+    // ตัวอย่าง: ถ้าชื่อฟิลด์ตรงกับพารามิเตอร์ Volume (ปริมาตร) หรือ Type Name
+    if (field.ParameterId == new ElementId(BuiltInParameter.HOST_VOLUME_COMPUTED))
+    {
+        // แอดฟิลด์ปริมาตรลงไปเป็นคอลัมน์ของตาราง
+        ScheduleField schedField = definition.AddField(field);
+    }
+}
+```
+
+---
+
+## 3. การกรอง การจัดกลุ่ม และการสรุปผลรวม (Sorting, Grouping & Totals)
+
+เมื่อเพิ่มคอลัมน์ลงในตารางแล้ว ในการทำงานจริงเรามักต้องการจัดเรียงข้อมูลให้สวยงาม เช่น จัดกลุ่มตามประเภทเสา หรือระดับชั้น (Level) และที่สำคัญที่สุดคือการ **หาผลรวมยอดรวมปริมาตรทั้งหมด (Grand Totals)** ของชิ้นส่วนเหล่านั้น
+
+```csharp title="การตั้งค่าจัดกลุ่มและยอดรวม"
+// 1. เปิดใช้งานการโชว์ยอดผลรวม (Grand Totals) ท้ายตาราง
+schedule.Definition.ShowGrandTotals = true;
+
+// 2. ตั้งค่าคอลัมน์เฉพาะ (เช่น คอลัมน์ปริมาตร) ให้คำนวณผลรวมสะสมดิ่งล่าง
+// (ต้องตั้งค่าผ่าน ScheduleField ของคอลัมน์นั้น)
+ScheduleField volumeColumnField = ...; // ตัวแปรของคอลัมน์ Volume
+volumeColumnField.DisplayType = ScheduleFieldDisplayType.Totals; // สั่งคำนวณยอดรวมสะสม
+```
+
+---
+
+## 4. ตัวอย่างจริง: ปลั๊กอินสร้างตารางสรุปปริมาตรคอนกรีตเสาโครงสร้างในคลิกเดียว
+
+ปลั๊กอินเต็มรูปแบบด้านล่างนี้ จะทำการรันเพื่อสร้างหน้าตาราง Schedule ตัวใหม่สำหรับ **เสาโครงสร้าง (Structural Columns)** โดยเฉพาะ พร้อมแอดคอลัมน์มาตรฐาน 4 ตัว ได้แก่:
+1. **Family and Type** (ชื่อครอบครัวและชนิด)
+2. **Base Level** (ชั้นอ้างอิงฐานเสา)
+3. **Concrete_Strength_FC** (พารามิเตอร์กำหนดเองที่เราสร้างไว้ในบทก่อนหน้า)
+4. **Volume** (ปริมาตรคอนกรีตจริง)
+
+พร้อมทั้งทำการตั้งค่าสั่งคำนวณผลรวมปริมาตรรวมของเสาทั้งหมดในตอนท้ายตารางให้อย่างสมบูรณ์แบบครับ!
+
+```csharp title="CreateColumnTakeoffScheduleCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class CreateColumnTakeoffScheduleCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        using (Transaction trans = new Transaction(doc, "สร้างตารางถอดแบบเสาโครงสร้างอัตโนมัติ"))
+        {
+            trans.Start();
+
+            try
+            {
+                // 1. สร้างตารางคำนวณปริมาณงานสำหรับหมวดหมู่เสาโครงสร้าง
+                ElementId categoryId = new ElementId(BuiltInCategory.OST_StructuralColumns);
+                ViewSchedule schedule = ViewSchedule.CreateSchedule(doc, categoryId);
+                
+                // ตั้งชื่อที่ไม่ซ้ำในตารางเดิม
+                schedule.Name = "ตารางถอดปริมาณคอนกรีตเสาโครงสร้าง (ระบบอัตโนมัติ)";
+
+                ScheduleDefinition def = schedule.Definition;
+
+                // 2. ดึงรายการฟิลด์ทั้งหมดที่ใส่ในตารางนี้ได้
+                IList<SchedulableField> availableFields = def.GetSchedulableFields();
+
+                // ตัวแปรเก็บฟิลด์ที่เราต้องการค้นหา
+                SchedulableField famTypeField = null;
+                SchedulableField levelField = null;
+                SchedulableField volumeField = null;
+                SchedulableField customStrengthField = null;
+
+                // ค้นหาฟิลด์เป้าหมายผ่านพารามิเตอร์
+                foreach (SchedulableField field in availableFields)
+                {
+                    // กรองตาม BuiltInParameter
+                    if (field.ParameterId == new ElementId(BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM))
+                    {
+                        famTypeField = field;
+                    }
+                    else if (field.ParameterId == new ElementId(BuiltInParameter.SCHEDULE_BASE_LEVEL_PARAM))
+                    {
+                        levelField = field;
+                    }
+                    else if (field.ParameterId == new ElementId(BuiltInParameter.HOST_VOLUME_COMPUTED))
+                    {
+                        volumeField = field;
+                    }
+                    
+                    // ค้นหาพารามิเตอร์แบบกำหนดเอง (Custom Parameter) ด้วยชื่อพารามิเตอร์
+                    // ใน Revit API เราต้องหาผ่าน Definition ของมันในโมเดล
+                    if (field.ParameterId.IntegerValue > 0)
+                    {
+                        Element paramElem = doc.GetElement(field.ParameterId);
+                        if (paramElem != null && paramElem.Name.Equals("Concrete_Strength_FC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            customStrengthField = field;
+                        }
+                    }
+                }
+
+                // 3. ทำการเพิ่มฟิลด์เรียงลำดับคอลัมน์จากซ้ายไปขวา
+                if (famTypeField != null) def.AddField(famTypeField);
+                if (levelField != null) def.AddField(levelField);
+                
+                // เพิ่มพารามิเตอร์เกรดคอนกรีต (ถ้ามีติดตั้งไว้ในระบบโมเดลแล้ว)
+                if (customStrengthField != null)
+                {
+                    def.AddField(customStrengthField);
+                }
+
+                // เพิ่มพารามิเตอร์ปริมาตรคอนกรีต
+                if (volumeField != null)
+                {
+                    ScheduleField volCol = def.AddField(volumeField);
+                    
+                    // 4. สั่งคำนวณผลรวมรวมยอดสะสม (Calculate totals) สำหรับคอลัมน์ปริมาตร
+                    volCol.DisplayType = ScheduleFieldDisplayType.Totals;
+                }
+
+                // 5. เปิดใช้งานการโชว์ผลรวมทั้งหมดสะสมท้ายตาราง (Grand Totals)
+                def.ShowGrandTotals = true;
+                
+                // สั่งจัดกลุ่มให้อยู่ในโหมดโชว์ชื่อหัวข้อสะสมพร้อมยอดผลรวม
+                def.GrandTotalsFlags = GrandTotalsFlags.Title | GrandTotalsFlags.Totals;
+
+                trans.Commit();
+
+                // 6. แจ้งเตือนและพามือใหม่ไปยังหน้าตาราง ViewSchedule ที่เปิดขึ้นใหม่ทันที
+                UIDocument uidoc = commandData.Application.ActiveUIDocument;
+                uidoc.ActiveView = schedule; // เปลี่ยนมุมมองจอภาพแสดงผลหน้าตารางนี้ทันที
+
+                TaskDialog.Show("สำเร็จ", 
+                    $"สร้างตาราง '{schedule.Name}' เรียบร้อยแล้ว!\n" +
+                    $"และเปิดหน้าตารางแสดงปริมาณคอนกรีตเสาทั้งหมดให้พร้อมใช้งาน");
+
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                trans.RollBack();
+                message = ex.Message;
+                return Result.Failed;
+            }
+        }
+    }
+}
+```
+
+:::tip[ความมหัศจรรย์ของตารางแบบ Dynamic]
+ตาราง ViewSchedule ที่ปลั๊กอิน C# ของเราสั่งสร้างขึ้นมานี้ เป็นตาราง Revit ดั้งเดิมแบบเรียลไทม์ 100% นั่นแปลว่า **หากวิศวกรโครงสร้างมีการสร้างเสาเพิ่ม, ย้ายขนาด หรือลบเสาทิ้งใน 3D ในอนาคต ตัวเลขปริมาตรและผลรวมสะสมในตารางนี้จะอัปเดตออโต้ให้อย่างถูกต้องในทันที** โดยไม่จำเป็นต้องมารันปลั๊กอินใหม่เพื่ออัปเดตข้อมูลตัวเลขเลยครับ!
+:::

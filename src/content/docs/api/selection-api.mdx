@@ -1,0 +1,282 @@
+---
+title: การเลือกชิ้นส่วนโครงสร้าง (Selection API & SelectionFilter)
+description: เรียนรู้การใช้งาน Selection API ของ Revit เพื่อรับการคลิกเลือกชิ้นงานจากผู้ใช้ และการสร้าง Selection Filter จำกัดเฉพาะเสา คาน หรือฐานรากโครงสร้าง
+---
+
+ปลั๊กอินส่วนใหญ่ที่ช่วยทุ่นแรงในงานวิศวกรรมโครงสร้าง มักต้องการให้วิศวกร **"คลิกเลือกชิ้นส่วนบนหน้าจอ"** เพื่อนำมาประมวลผลต่อ เช่น การดึงพิกัดเสาเพื่อไปคำนวณระยะห่าง, การถอดปริมาณเหล็กเสริม หรือการดึงพารามิเตอร์ของคานมาแก้ไข Revit API มีระบบ **Selection API** ที่ช่วยให้เราควบคุมการโต้ตอบของผู้ใช้ได้อย่างสมบูรณ์แบบครับ!
+
+---
+
+## 1. Selection API คืออะไร?
+
+ใน Revit API การคลิกเลือกวัตถุต่าง ๆ จะถูกจัดการผ่าน Class `Selection` ซึ่งเรียกใช้ผ่าน `UIDocument` (การโต้ตอบผ่านหน้าจอแสดงผล)
+
+```csharp title="การเข้าถึง Selection Object"
+using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
+
+UIDocument uidoc = commandData.Application.ActiveUIDocument;
+Selection selection = uidoc.Selection;
+```
+
+มีวิธีการเลือกงานแบ่งออกเป็น 2 รูปแบบหลัก:
+1. **Pre-Selection:** ผู้ใช้คลิกเลือกชิ้นงานไว้ก่อนแล้วค่อยกดปุ่มรันปลั๊กอิน
+2. **Interactive Selection:** ปลั๊กอินรันขึ้นมาแล้วหยุดรอให้ผู้ใช้คลิกเลือกชิ้นงานบนหน้าจอทีละชิ้น หรือลากกรอบครอบชิ้นงาน
+
+---
+
+## 2. การดึงวัตถุที่เลือกไว้ก่อนหน้า (Pre-Selection)
+
+ถ้าผู้ใช้เลือกวัตถุบนหน้าจอไว้แล้วก่อนรันปลั๊กอิน เราสามารถดึงค่าเหล่านั้นออกมาประมวลผลทันทีได้ด้วยคำสั่ง `GetElementIds()` และเรายังสามารถสั่งเลือกชิ้นงานผ่านโค้ดได้ด้วย `SetElementIds()`
+
+```csharp title="Command.cs — ดึงค่าและตั้งค่า Selection"
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+// 1. ดึง ElementId ทั้งหมดที่ผู้ใช้คลิกเลือกไว้บนหน้าจอแล้ว
+ICollection<ElementId> selectedIds = uidoc.Selection.GetElementIds();
+
+if (selectedIds.Count > 0)
+{
+    TaskDialog.Show("Pre-Selection", $"คุณเลือกวัตถุไว้ทั้งหมด {selectedIds.Count} ชิ้น");
+}
+
+// 2. การสั่งให้ปลั๊กอินเลือกและ Highlight วัตถุผ่านโค้ด
+List<ElementId> idsToSelect = new List<ElementId> { new ElementId(123456), new ElementId(789101) };
+uidoc.Selection.SetElementIds(idsToSelect);
+```
+
+---
+
+## 3. การคลิกเลือกวัตถุทีละชิ้น (PickObject)
+
+หากเราต้องการให้ผู้ใช้เลือกชิ้นส่วนโครงสร้างเฉพาะชิ้น เช่น "กรุณาเลือกคานตัวแรกที่ต้องการเชื่อม" เราจะใช้เมธอด `.PickObject()` ซึ่งโปรแกรมจะหยุดรอ (Block Thread) จนกว่าผู้ใช้จะคลิกเลือกวัตถุบนหน้าจอ หรือกดปุ่ม `ESC` เพื่อยกเลิก
+
+```csharp title="ตัวอย่างการใช้ PickObject ดึงเสาโครงสร้าง"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
+
+try
+{
+    // โปรแกรมจะหยุดรอให้ผู้ใช้คลิกวัตถุ 1 ชิ้น
+    Reference pickedRef = uidoc.Selection.PickObject(
+        ObjectType.Element, 
+        "กรุณาคลิกเลือกเสาโครงสร้าง 1 ชิ้น"
+    );
+
+    // ดึง Element จริงออกมาจากจุดอ้างอิง (Reference)
+    Element elem = doc.GetElement(pickedRef.ElementId);
+    
+    TaskDialog.Show("สำเร็จ", $"คุณเลือก: {elem.Name} (Category: {elem.Category.Name})");
+}
+catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+{
+    // เกิดขึ้นเมื่อผู้ใช้กด ESC หรือ Cancel
+    TaskDialog.Show("ยกเลิก", "คุณยกเลิกการเลือกชิ้นงาน");
+}
+```
+
+### 🔍 ชนิดของ ObjectType ที่มีให้เลือก
+ในการใช้ `PickObject` เราสามารถกำหนดประเภทของจุดที่ให้คลิกเลือกได้:
+*   `ObjectType.Element` — เลือกชิ้นวัตถุ (ชิ้นงานเสา คาน ฐานราก ฯลฯ)
+*   `ObjectType.PointOnElement` — คลิกเลือกจุดเฉพาะเจาะจงบนชิ้นผิววัตถุ
+*   `ObjectType.Edge` — คลิกเลือกเฉพาะเส้นขอบของวัตถุ (เช่น ขอบคาน)
+*   `ObjectType.Face` — คลิกเลือกเฉพาะผิวหน้าของวัตถุ (เช่น ผิวหน้าคอนกรีตคาน)
+
+---
+
+## 4. การกรองการเลือกขั้นสูงด้วย `ISelectionFilter`
+
+ลองคิดดูครับว่า ถ้าเราเขียนปลั๊กอินให้วิศวกรคลิกเลือก **"เสาโครงสร้าง"** แต่เขากลับเผลอไปคลิกโดนพื้น แผ่นพื้นสถาปัตย์ หรือผนังสลับกันไปมา ปลั๊กอินของเราย่อมเกิดความเสียหายหรือประมวลผลผิดพลาดแน่นอน!
+
+ทางออกคือการสร้าง **`ISelectionFilter`** เพื่อควบคุมพฤติกรรมการคลิกของผู้ใช้ โดยวัตถุที่ไม่อยู่ในหมวดหมู่ที่อนุญาตจะไม่ยอมให้เอาเมาส์ไปชี้หรือคลิกได้เลยครับ
+
+```csharp title="StructuralSelectionFilter.cs — ฟิลเตอร์ล็อกเฉพาะเสาและคาน"
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI.Selection;
+
+namespace RevitToolkit;
+
+public class StructuralSelectionFilter : ISelectionFilter
+{
+    // เมธอดนี้จะตรวจสอบวัตถุก่อนที่ผู้ใช้จะคลิกได้
+    // ถ้าคืนค่า true ผู้ใช้จะชี้เมาส์และคลิกชิ้นนั้นได้
+    public bool AllowElement(Element elem)
+    {
+        // 1. ตรวจสอบว่าชิ้นงานนี้ไม่ใช่ ElementType (ต้องเป็นตัวโมเดลจริงในโมเดล)
+        if (elem is ElementType) return false;
+
+        // 2. เช็ก Category ของวัตถุ
+        if (elem.Category != null)
+        {
+            int categoryId = elem.Category.Id.IntegerValue;
+            
+            // ล็อกเฉพาะเสาโครงสร้าง (OST_StructuralColumns) และคานโครงสร้าง (OST_StructuralFraming)
+            if (categoryId == (int)BuiltInCategory.OST_StructuralColumns ||
+                categoryId == (int)BuiltInCategory.OST_StructuralFraming)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // เมธอดนี้ใช้ตรวจสอบคุณสมบัติย่อยกรณีเลือกเป็นผิวหรือขอบ (คืนค่า true เสมอถ้าเน้นเลือกตัว Element)
+    public bool AllowReference(Reference reference, XYZ position)
+    {
+        return true;
+    }
+}
+```
+
+วิธีการเอา `StructuralSelectionFilter` ไปใช้งานร่วมกับคำสั่ง `PickObject` หรือ `PickObjects` ให้ส่งตัวกรองนี้เข้าไปในอาร์กิวเมนต์ตัวที่สอง:
+
+```csharp title="การใช้งาน SelectionFilter ร่วมกับ PickObject"
+// ส่ง Instance ของฟิลเตอร์เข้าไปควบคุมการเลือก
+Reference pickedRef = uidoc.Selection.PickObject(
+    ObjectType.Element, 
+    new StructuralSelectionFilter(), 
+    "กรุณาคลิกเลือกเสาหรือคานโครงสร้างเท่านั้น"
+);
+```
+
+---
+
+## 5. การเลือกวัตถุทีละหลายชิ้น (PickObjects & PickElementsByRectangle)
+
+เมื่อต้องการให้วิศวกรโครงสร้างคลิกเลือกเสาหรือคานหลาย ๆ ตัวพร้อมกัน เรามีวิธีการเลือก 2 รูปแบบที่ทรงพลังมาก:
+
+### A. เมธอด `PickObjects`
+ผู้ใช้สามารถคลิกเลือกชิ้นงานบนหน้าจอทีละชิ้น และสะสมจำนวนไปเรื่อย ๆ จากนั้นเมื่อเลือกครบเสร็จแล้ว ให้กดปุ่ม **"Finish"** บนแถบตัวเลือกด้านบนซ้ายของหน้าต่าง Revit เพื่อยืนยัน หรือกด **"Cancel"** เพื่อยกเลิก
+
+```csharp title="การเลือกหลายวัตถุด้วย PickObjects"
+IList<Reference> pickedRefs = uidoc.Selection.PickObjects(
+    ObjectType.Element,
+    new StructuralSelectionFilter(),
+    "เลือกเสาและคานทั้งหมดที่ต้องการ จากนั้นคลิกปุ่ม Finish บนแถบเครื่องมือสีเขียว"
+);
+```
+
+### B. เมธอด `PickElementsByRectangle`
+ให้ผู้ใช้ลากกล่องสี่เหลี่ยมคลุมพื้นที่เพื่อเลือกชิ้นงานในหน้าต่างมุมมอง (View) ได้อย่างรวดเร็ว โดยจะทำงานร่วมกับ `ISelectionFilter` เพื่อคัดกรองเฉพาะชิ้นงานโครงสร้างที่อยู่ภายในพื้นที่กรอบสีเหลี่ยมนั้นเท่านั้น
+
+```csharp title="การลากกรอบเลือกชิ้นงานโครงสร้าง"
+IList<Element> pickedElements = uidoc.Selection.PickElementsByRectangle(
+    new StructuralSelectionFilter(),
+    "ลากกรอบสี่เหลี่ยมครอบคลุมพื้นที่เสาและคานที่ต้องการใช้งาน"
+);
+```
+
+---
+
+## 6. ตัวอย่างจริง: เครื่องมือคำนวณปริมาตรคอนกรีตรวมของชิ้นส่วนโครงสร้าง
+
+ในโครงการจริง วิศวกรโครงสร้างมักต้องการเช็กปริมาตรคอนกรีตรวมอย่างรวดเร็วเพื่อใช้ในการประมาณราคางาน สั่งซื้อ หรือวางแผนเทคอนกรีตแต่ละเฟส โค้ดด้านล่างนี้จะแสดงระบบคำนวณปริมาตรรวมของเสา คาน และฐานรากที่ผ่านการกรองด้วย `ISelectionFilter` ครับ
+
+```csharp title="ConcreteVolumeCalculatorCommand.cs"
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
+
+namespace RevitToolkit;
+
+// 1. สร้างตัวกรองเฉพาะชิ้นงานคอนกรีตโครงสร้างหลัก
+public class ConcreteStructureFilter : ISelectionFilter
+{
+    public bool AllowElement(Element elem)
+    {
+        if (elem is ElementType) return false;
+        if (elem.Category == null) return false;
+
+        int catId = elem.Category.Id.IntegerValue;
+
+        // อนุญาตให้เลือกได้เฉพาะ:
+        // - เสาโครงสร้าง (OST_StructuralColumns)
+        // - คานโครงสร้าง (OST_StructuralFraming)
+        // - ฐานรากโครงสร้าง (OST_StructuralFoundation)
+        return catId == (int)BuiltInCategory.OST_StructuralColumns ||
+               catId == (int)BuiltInCategory.OST_StructuralFraming ||
+               catId == (int)BuiltInCategory.OST_StructuralFoundation;
+    }
+
+    public bool AllowReference(Reference reference, XYZ position)
+    {
+        return true;
+    }
+}
+
+[Transaction(TransactionMode.Manual)]
+public class ConcreteVolumeCalculatorCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        UIDocument uidoc = commandData.Application.ActiveUIDocument;
+        Document doc = uidoc.Document;
+
+        try
+        {
+            // 2. ให้ผู้ใช้ลากกรอบสี่เหลี่ยมเลือกวัตถุผ่านฟิลเตอร์
+            IList<Element> selectedElements = uidoc.Selection.PickElementsByRectangle(
+                new ConcreteStructureFilter(),
+                "ลากกรอบครอบคลุม เสา คาน หรือฐานรากที่ต้องการสรุปปริมาตรคอนกรีตรวม"
+            );
+
+            if (selectedElements.Count == 0)
+            {
+                TaskDialog.Show("ผลการทำงาน", "ไม่พบชิ้นส่วนโครงสร้างคอนกรีตที่เลือก");
+                return Result.Cancelled;
+            }
+
+            double totalVolumeCubicFeet = 0;
+            int count = 0;
+
+            // 3. วนลูปอ่านพารามิเตอร์ปริมาตร (Volume) ของแต่ละชิ้นงาน
+            foreach (Element elem in selectedElements)
+            {
+                // ดึงพารามิเตอร์ Built-in สำหรับเก็บค่าปริมาตร
+                Parameter volParam = elem.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED);
+                
+                if (volParam != null && volParam.HasValue)
+                {
+                    totalVolumeCubicFeet += volParam.AsDouble();
+                    count++;
+                }
+            }
+
+            // 4. แปลงหน่วยจากฟุตลูกบาศก์ (Cubic Feet) -> ลูกบาศก์เมตร (Cubic Meters)
+            // Revit 2022+ ใช้ระบบ ForgeTypeId เพื่อความถูกต้องสูงสุด
+            double totalVolumeCubM = UnitUtils.ConvertFromInternalUnits(
+                totalVolumeCubicFeet, 
+                UnitTypeId.CubicMeters
+            );
+
+            // แสดงผลการถอดปริมาณงาน
+            string resultMessage = $"จำนวนชิ้นงานโครงสร้างที่เลือกได้: {count} ชิ้น\n" +
+                                   $"----------------------------------\n" +
+                                   $"ปริมาตรคอนกรีตรวม: {totalVolumeCubM:F3} ลบ.ม. (cu.m.)";
+
+            TaskDialog.Show("สรุปปริมาตรคอนกรีต", resultMessage);
+            return Result.Succeeded;
+        }
+        catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+        {
+            TaskDialog.Show("ยกเลิกการทำงาน", "ผู้ใช้กดยกเลิกการทำงานก่อนเสร็จสิ้น");
+            return Result.Cancelled;
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return Result.Failed;
+        }
+    }
+}
+```
+
+:::tip[ข้อดีของการคำนวณผ่าน API]
+การเขียนปลั๊กอินถอดปริมาตรด้วยวิธีนี้ ช่วยให้วิศวกรสามารถลากกรอบครอบงานและรู้ตัวเลขคอนกรีตที่ต้องเตรียมสั่งซื้อได้ในเวลาไม่กี่วินาที โดยไม่ต้องเสียเวลาสร้างตาราง Schedule แยกต่างหาก หรือกรณีถอดชิ้นส่วนย่อยที่ซับซ้อน ปลั๊กอินจะช่วยกรองสิ่งที่ไม่ใช่ออกได้อย่างง่ายดายครับ
+:::

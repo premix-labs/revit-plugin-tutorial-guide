@@ -110,4 +110,66 @@ ICollection<ElementId> selectedIds = uidoc.Selection.GetElementIds();
 การดึงข้อมูลด้วย `FilteredElementCollector` เป็นแค่การประสานงานเพื่อ "อ่าน" (Read Only) เท่านั้น ดังนั้นเราถึงไม่ต้องเปิด `Transaction` ขึ้นมาครอบการทำงานแต่อย่างใด
 :::
 
+## 3. การปรับแต่งความเร็วในการดึงข้อมูล (Quick Filters vs Slow Filters)
+
+เมื่อโมเดลของคุณเริ่มใหญ่ขึ้น (เช่น มีวัตถุถึงแสนหรือล้านชิ้นในงานโครงสร้างช่วงตึกสูง) ลำดับการกรองวัตถุด้วย `FilteredElementCollector` จะเป็นตัวตัดสินหลักเลยครับว่าปลั๊กอินของคุณจะรันเสร็จใน 0.1 วินาที หรือต้องรอค้างไปนานกว่า 10 วินาที!
+
+ใน Revit API ตัวกรองถูกแบ่งออกเป็น 2 ประเภทใหญ่ตามความเร็วในการประมวลผล:
+
+### ⚡ 1. Quick Filters (เร็วระดับมิลลิวินาที)
+ตัวกรองประเภทนี้รันอยู่บนโครงสร้างหน่วยความจำหลักระบบ **C++ Native** ของ Revit ทำให้สามารถคัดแยกวัตถุจำนวนมากทิ้งได้ทันทีโดยไม่ต้องโหลดหน่วยความจำฝั่ง C# Managed ขึ้นมาครอบวัตถุ
+*   **ตัวอย่างที่ควรใช้แรกสุด:**
+    *   `.OfCategory(...)` (กรองตาม Category)
+    *   `.OfClass(...)` (กรองตามชนิด Class ใน C#)
+    *   `.WhereElementIsNotElementType()` (กรองเอาเฉพาะตัววางในแบบ)
+    *   `.WhereElementIsElementType()` (กรองเอาเฉพาะต้นแบบดีไซน์)
+
+### 🐢 2. Slow Filters (ช้ากว่าและใช้แรมมากกว่า)
+ตัวกรองประเภทนี้กำหนดให้ Revit ต้องดึงโครงสร้างรายละเอียดเชิงลึกของชิ้นงานขึ้นมาสร้างเป็น C# Object เพื่อเปิดตรวจสอบข้อมูลภายใน (เช่น ตรวจรูปทรงเรขาคณิต หรือค่าพารามิเตอร์ข้างใน) จึงรันได้ช้ากว่ามาก
+*   **ตัวอย่าง:**
+    *   `ElementParameterFilter` (กรองหาชิ้นงานตามค่าที่อยู่ในพารามิเตอร์)
+    *   `BoundingBoxIntersectsFilter` (กรองตามการชนกันของพื้นที่ 3D)
+    *   การวนลูปเช็กค่าด้วยคำสั่ง LINQ ของ C# (เช่น `.Where(x => ... )`)
+
+---
+
+### 🔑 กฎทองการเขียนฟิงเตอร์ความเร็วสูง (The Golden Rule)
+
+> **"เริ่มด้วย Quick Filters เสมอเพื่อตัดข้อมูลส่วนใหญ่ออกไปก่อน แล้วค่อยตามด้วย Slow Filters หรือ LINQ ปิดท้าย!"**
+
+ลองมาดูเปรียบเทียบการกรองหาเสาโครงสร้างคอนกรีตที่มีพารามิเตอร์ระบุความแข็งแรง (`Concrete_Strength_FC`) เท่ากับ `"C350"` ระหว่างวิธีที่ **"แย่"** และ **"ดีที่สุด"** กันครับ:
+
+```csharp title="การเปรียบเทียบลำดับการกรองความเร็วสูง"
+// ❌ วิธีที่แย่และช้าที่สุด: วนลูปเช็กวัตถุทั้งโปรเจ็กต์ด้วย LINQ (Revit จะรันช้าจนโปรแกรมค้าง)
+var slowWay = new FilteredElementCollector(doc)
+    .WhereElementIsNotElementType()
+    .ToElements() // ดึงของทั้งหมดแสนชิ้นเข้ามาในฝั่ง C#
+    .Where(x => x.Category?.Id.IntegerValue == (int)BuiltInCategory.OST_StructuralColumns 
+           && x.LookupParameter("Concrete_Strength_FC")?.AsString() == "C350")
+    .ToList();
+
+//  วิธีที่ดีที่สุดและเร็วที่สุด: ใช้ Quick Filter สกัดทิ้งก่อน ค่อยเช็กเงื่อนไขเฉพาะเจาะจง
+// 1. กรองเอาเฉพาะเสาโครงสร้างที่เป็น Instance (ใช้ Quick Filter ทั้งคู่ - คัดเหลือเสาไม่กี่ร้อยต้นอย่างรวดเร็ว)
+var collector = new FilteredElementCollector(doc)
+    .OfCategory(BuiltInCategory.OST_StructuralColumns)
+    .WhereElementIsNotElementType();
+
+// 2. ใช้ Slow Filter (หรือดึงออกมาวนลูปประมวลผลต่อฝั่ง C# กับลิสต์ขนาดเล็ก)
+var result = new List<Element>();
+foreach (Element col in collector)
+{
+    Parameter param = col.LookupParameter("Concrete_Strength_FC");
+    if (param != null && param.AsString() == "C350")
+    {
+        result.Add(col);
+    }
+}
+```
+
+:::tip[เคล็ดลับประสิทธิภาพ]
+การสลับลำดับเอา Quick Filter ขึ้นก่อน ช่วยตัดวัตถุที่ไม่เกี่ยวข้องออกไปถึง **99%** ตั้งแต่ในแรม C++ ของ Revit ทำให้ C# ของเราทำงานต่อกับลิสต์ขนาดเล็กจิ๋วทันที ส่งผลให้ปลั๊กอินทำงานเสร็จแทบจะในพริบตาครับ!
+:::
+
+---
+
 ในบทต่อไป เราจะมาดูวิธีการ "แก้ไข/สร้าง" (Write) ข้อมูลกลับเข้าไปในโมเดลผ่านระบบ Transaction กันครับ!
