@@ -180,9 +180,10 @@ public class ColumnCsvExporter : IExternalCommand
                 {
                     XYZ point = locPoint.Point;
                     
-                    // แปลงค่าหน่วยวัดมาตรฐาน Revit (ฟุต) ให้กลายเป็นระบบเมตรที่เข้าใจง่าย (คูณด้วย 0.3048)
-                    double posX = point.X * 0.3048;
-                    double posY = point.Y * 0.3048;
+                    // แปลงค่าหน่วยวัดมาตรฐาน Revit (ฟุต) ให้กลายเป็นระบบเมตร
+                    // ใช้ UnitUtils.ConvertFromInternalUnits() แทนการคูณเลขตรงๆ เพื่อให้ถูกต้องตามมาตรฐาน Revit API
+                    double posX = UnitUtils.ConvertFromInternalUnits(point.X, UnitTypeId.Meters);
+                    double posY = UnitUtils.ConvertFromInternalUnits(point.Y, UnitTypeId.Meters);
                     positionStr = $"{posX:F3},{posY:F3}";
                 }
 

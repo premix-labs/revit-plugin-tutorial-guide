@@ -118,9 +118,28 @@ public class Command : IExternalCommand
         try
         {
             // --- โค้ดทำงานหลักเขียนแก้ไขโมเดลของคุณอยู่ตรงนี้ ---
-            
-            // จำลองการเขียนที่อาจเกิด Error เช่น ดึงชื่อพารามิเตอร์ที่ไม่มีอยู่จริง
-            throw new InvalidOperationException("จำลองระบบค้นหาวัตถุล้มเหลวเนื่องจากไม่มีโมเดลอ้างอิง");
+            var columns = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_StructuralColumns)
+                .WhereElementIsNotElementType()
+                .ToElements();
+
+            using (Transaction trans = new Transaction(doc, "Auto Number Columns"))
+            {
+                trans.Start();
+
+                int counter = 1;
+                foreach (Element col in columns)
+                {
+                    Parameter markParam = col.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+                    if (markParam != null && !markParam.IsReadOnly)
+                    {
+                        markParam.Set($"C-{counter:D2}");
+                        counter++;
+                    }
+                }
+
+                trans.Commit();
+            }
 
             return Result.Succeeded;
         }
