@@ -12,25 +12,46 @@ description: ทำให้ DLL และ .addin ถูก copy ไปตำแ
 
 วิธีนี้ทำให้เราใช้ **Relative Path** ในไฟล์ `.addin` ได้ ซึ่งจะทำให้เราย้ายโปรเจ็กต์ไปเครื่องไหนก็ Build ติดเสมอ!
 
-```xml title="โปรเจ็กต์.csproj"
-<PropertyGroup>
-  <RevitYear>2026</RevitYear>
-  <RevitAddinDir>$(ProgramData)\Autodesk\Revit\Addins\$(RevitYear)\</RevitAddinDir>
-  <DeployDir>$(RevitAddinDir)$(AssemblyName)\</DeployDir>
-</PropertyGroup>
+### วิธีการแก้ไขไฟล์ `โปรเจ็กต์.csproj`
 
-<Target Name="CopyRevitFiles" AfterTargets="Build">
-  <MakeDir Directories="$(RevitAddinDir)" />
-  <MakeDir Directories="$(DeployDir)" />
+ให้เปิดไฟล์ **`โปรเจ็กต์.csproj`** ของคุณขึ้นมา แล้วทำการแทรกค่าตัวแปรลงในกลุ่ม `<PropertyGroup>` เดิม และวางกลุ่มแท็ก `<Target>` ไว้ด้านล่างสุดก่อนแท็กปิด `</Project>` ดังตัวอย่างเต็มรูปแบบนี้ครับ (ห้ามลบโค้ดเดิมของคุณทิ้ง):
 
-  <Copy
-    SourceFiles="$(TargetPath)"
-    DestinationFiles="$(DeployDir)$(TargetFileName)" />
+```xml title="โปรเจ็กต์.csproj" {11-14,21-33}
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    
+    <!-- 🟢 1. แทรกตัวแปรจัดการพาธเพิ่มเติมไว้ตรงนี้ -->
+    <RevitYear>2026</RevitYear>
+    <RevitAddinDir>$(ProgramData)\Autodesk\Revit\Addins\$(RevitYear)\</RevitAddinDir>
+    <DeployDir>$(RevitAddinDir)$(AssemblyName)\</DeployDir>
+  </PropertyGroup>
 
-  <Copy
-    SourceFiles="$(ProjectDir)$(AssemblyName).addin"
-    DestinationFiles="$(RevitAddinDir)$(AssemblyName).addin" />
-</Target>
+  <ItemGroup>
+    <!-- กลุ่มรายการ Reference อ้างอิงไฟล์ DLL ของ Revit ของคุณ... -->
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 🟢 2. วางส่วน Target สั่งก๊อปปี้ไฟล์ไว้บรรทัดล่างสุดก่อนปิด </Project> -->
+  <Target Name="CopyRevitFiles" AfterTargets="Build">
+    <MakeDir Directories="$(RevitAddinDir)" />
+    <MakeDir Directories="$(DeployDir)" />
+
+    <Copy
+      SourceFiles="$(TargetPath)"
+      DestinationFiles="$(DeployDir)$(TargetFileName)" />
+
+    <Copy
+      SourceFiles="$(ProjectDir)$(AssemblyName).addin"
+      DestinationFiles="$(RevitAddinDir)$(AssemblyName).addin" />
+  </Target>
+</Project>
 ```
 
 ## ผลลัพธ์ที่ต้องการ

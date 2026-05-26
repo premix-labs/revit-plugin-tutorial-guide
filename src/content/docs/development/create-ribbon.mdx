@@ -125,7 +125,23 @@ public class App : IExternalApplication
 1. หารูปภาพนามสกุล `.png` สวยๆ ขนาด **32x32 pixel** 
 2. สร้างโฟลเดอร์ชื่อ `icon` ในโปรเจ็กต์ นำรูปภาพตั้งชื่อว่า `icon.png` จับโยนใส่เข้าไปในโฟลเดอร์ `icon` ของคุณ
 3. กดย่อโปรเจ็กต์คลิกที่รูปภาพ และไปดูที่หน้า Properties (มุมขวาล่าง) ให้ตั้งค่า **Copy to Output Directory** เป็น **`Copy if newer`** เพื่ออนุญาตให้รูปก็อปปี้เข้าไปแนบข้างๆ ไฟล์ `.dll` อัตโนมัติเวลาเรากด Build 
-4. **⚠️ สำคัญมาก:** โมดูล `BitmapImage` เป็นเทคโนโลยีของหน้าต่าง WPF หากพิมพ์ตามแล้วหาไฟล์ไม่เจอ (ขึ้น Error สีแดง) ให้กลับไปที่ไฟล์ `โปรเจ็กต์.csproj` แล้วเพิ่มบรรทัด `<UseWPF>true</UseWPF>` เข้าไปในสุดไว้ใต้ `<Nullable>` ครับ
+4. **⚠️ สำคัญมาก:** โมดูล `BitmapImage` เป็นเทคโนโลยีของหน้าต่าง WPF หากพิมพ์ตามแล้วเจอปัญหาหาไฟล์ไม่เจอหรือเกิด Error สีแดงตอนคอมไพล์ ให้เข้าไปแก้ไขไฟล์ **`โปรเจ็กต์.csproj`** โดยการแทรกแท็ก `<UseWPF>true</UseWPF>` เข้าไปในกลุ่ม `<PropertyGroup>` แรกสุดของไฟล์ (วางไว้ใต้ `<Nullable>enable</Nullable>`) ดังตัวอย่างนี้ครับ:
+
+   ```xml title="โปรเจ็กต์.csproj"
+   <Project Sdk="Microsoft.NET.Sdk">
+     <PropertyGroup>
+       <TargetFramework>net8.0-windows</TargetFramework>
+       <Nullable>enable</Nullable>
+       
+       <!-- 🟢 เพิ่มบรรทัดนี้ลงไปเพื่อเปิดใช้งาน WPF -->
+       <UseWPF>true</UseWPF>
+       
+       <ImplicitUsings>enable</ImplicitUsings>
+       <PlatformTarget>x64</PlatformTarget>
+     </PropertyGroup>
+     ...
+   </Project>
+   ```
 
 ## 2. ปรับปรุงไฟล์ `.addin`
 เนื่องจากจุดเริ่มต้น (Entry Point) ของ Plugin เราเปลี่ยนจากตัว `Command` มาเป็น Application วาดหน้าจอ เราจึงต้องแก้ไข `RevitToolkit.addin` เล็กน้อยดังนี้:
