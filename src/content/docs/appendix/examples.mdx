@@ -116,3 +116,173 @@ public class Command : IExternalCommand
 }
 ```
 
+---
+
+## 🚀 สูตรสำเร็จโค้ดใช้งานจริงในอุตสาหกรรม (Production Boilerplates)
+
+ด้านล่างนี้คือตัวอย่างโปรแกรมสำเร็จรูปเกรดสูง (High-value automation templates) ที่รวบรวมทักษะเรื่อง Element Collector, Transaction, Parameter และการสืบค้นพิกัดชิ้นวัตถุเข้าไว้ด้วยกัน ผู้อ่านสามารถนำไปประยุกต์ใช้งานจริงในบริษัทได้ทันทีครับ:
+
+### 📊 สูตรที่ 1: ระบบส่งออกปริมาณเสาและพิกัดงานออกมาเป็น Excel (BIM CSV Exporter)
+สคริปต์นี้จะสแกนหาเสาโครงสร้างทั้งหมดในโครงการ ดึงชื่อประเภท (Family Type), พิกัดตำแหน่ง XYZ และขนาดมิติจริง จากนั้นส่งออกข้อมูลจัดลงไฟล์ตารางข้อความ CSV ซึ่งสามารถนำไปเปิดทำงานต่อใน Microsoft Excel เพื่อคำนวณปริมาณงานและทำราคา (BOQ) ได้ทันที:
+
+```csharp title="ColumnCsvExporter.cs"
+using System;
+using System.IO;
+using System.Text;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ColumnCsvExporter : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        try
+        {
+            // 1. ดึงเสาโครงสร้างทั้งหมดในแบบจำลอง
+            var columns = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_StructuralColumns)
+                .WhereElementIsNotElementType()
+                .ToElements();
+
+            if (columns.Count == 0)
+            {
+                TaskDialog.Show("Exporter", "ไม่พบวัตถุเสาโครงสร้างในโครงการนี้");
+                return Result.Succeeded;
+            }
+
+            // 2. ตั้งเป้าหมายบันทึกไฟล์ข้อความ CSV ไปยัง Desktop ของผู้ใช้
+            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            string csvFilePath = Path.Combine(desktopPath, "Revit_Column_QTO.csv");
+
+            // 3. เริ่มสร้างชุดข้อความตาราง (ใช้ UTF-8 BOM เพื่อไม่ให้ภาษาไทยใน Excel แสดงผลเพี้ยน)
+            StringBuilder csvBuilder = new StringBuilder();
+            csvBuilder.AppendLine("\uFEFFElement ID,Family Type,Position X,Position Y,Level,Mark");
+
+            foreach (Element col in columns)
+            {
+                // ดึงพารามิเตอร์ชื่อประเภทและเลเวลชั้นที่อยู่ของเสา
+                string typeName = col.Name;
+                string levelName = doc.GetElement(col.LevelId)?.Name ?? "N/A";
+                
+                // ดึงรหัสเบอร์เขียนข้อความ (Mark)
+                Parameter markParam = col.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+                string markValue = markParam?.AsString() ?? "";
+
+                // ดึงพิกัดตำแหน่งภูมิศาสตร์ XYZ ทางกายภาพของเสา
+                string positionStr = "N/A,N/A";
+                if (col.Location is LocationPoint locPoint)
+                {
+                    XYZ point = locPoint.Point;
+                    
+                    // แปลงค่าหน่วยวัดมาตรฐาน Revit (ฟุต) ให้กลายเป็นระบบเมตรที่เข้าใจง่าย (คูณด้วย 0.3048)
+                    double posX = point.X * 0.3048;
+                    double posY = point.Y * 0.3048;
+                    positionStr = $"{posX:F3},{posY:F3}";
+                }
+
+                // ต่อสายอักษรบันทึกตารางข้อมูล
+                csvBuilder.AppendLine($"{col.Id},{typeName},{positionStr},{levelName},{markValue}");
+            }
+
+            // 4. บันทึกไฟล์ข้อมูลลงดิสก์
+            File.WriteAllText(csvFilePath, csvBuilder.ToString(), Encoding.UTF8);
+
+            TaskDialog.Show("Success", $"ส่งออกข้อมูลปริมาณเสาทั้งหมด {columns.Count} ต้น สำเร็จ!\nบันทึกไฟล์ไว้ที่: {csvFilePath}");
+            return Result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            TaskDialog.Show("Error", $"ระบบส่งออกข้อมูลล้มเหลว: {ex.Message}");
+            return Result.Failed;
+        }
+    }
+}
+```
+
+---
+
+### 🏷️ สูตรที่ 2: ระบบเปลี่ยนชื่อรหัสเสายกแผงเรียงลำดับจากซ้ายไปขวา (Grid-based Batch Rename)
+บ่อยครั้งที่โมเดลที่เราดึงมาจากฝ่ายสถาปัตย์จะมีชื่อพารามิเตอร์ `Mark` สะเปะสะปะ สคริปต์นี้จะรันค้นหาเสาโครงสร้างทั้งหมด คัดแยกเลเวลชั้นงาน จากนั้นคำนวณเรียงลำดับพิกัดจากซ้ายไปขวา (ตามแกน X) และบนลงล่าง (ตามแกน Y) แล้วเขียนรหัสใหม่ เช่น `C-01`, `C-02`, `C-03` จัดระเบียบให้อย่างเรียบร้อยสมบูรณ์แบบ:
+
+```csharp title="ColumnBatchRenamer.cs"
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitToolkit;
+
+[Transaction(TransactionMode.Manual)]
+public class ColumnBatchRenamer : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        Document doc = commandData.Application.ActiveUIDocument.Document;
+
+        try
+        {
+            // 1. ดึงข้อมูลเสาทั้งหมด
+            var columns = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_StructuralColumns)
+                .WhereElementIsNotElementType()
+                .ToElements()
+                .ToList();
+
+            if (!columns.Any())
+            {
+                TaskDialog.Show("Batch Rename", "ไม่พบเสาโครงสร้างสำหรับการจัดลำดับเรียงรหัสใหม่");
+                return Result.Succeeded;
+            }
+
+            // 2. จัดกลุ่มเสาตามระดับเลเวลชั้น และเรียงพิกัด (X ก่อน ตามด้วย Y)
+            // เพื่อให้การรันรหัสเสาเรียงลำดับจากซ้ายไปขวา บนลงล่าง อย่างสม่ำเสมอ
+            var sortedColumns = columns
+                .Where(c => c.Location is LocationPoint)
+                .OrderBy(c => c.LevelId.Value) // เรียงตามระดับความสูงชั้น
+                .ThenBy(c => ((LocationPoint)c.Location).Point.X) // เรียงพิกัดซ้ายไปขวา
+                .ThenByDescending(c => ((LocationPoint)c.Location).Point.Y) // เรียงพิกัดบนลงล่าง
+                .ToList();
+
+            // 3. เริ่มเปิดประวัติ Transaction เพื่ออัปเดตโมเดล
+            using (Transaction trans = new Transaction(doc, "Batch Rename Columns by Grid"))
+            {
+                trans.Start();
+
+                int counter = 1;
+                foreach (Element col in sortedColumns)
+                {
+                    Parameter markParam = col.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
+                    
+                    if (markParam != null && !markParam.IsReadOnly)
+                    {
+                        // สั่งเขียนรหัสเรียงลำดับ เช่น C-01, C-02, C-03 เป็นต้น
+                        string newMarkValue = $"C-{counter:D2}";
+                        markParam.Set(newMarkValue);
+                        counter++;
+                    }
+                }
+
+                trans.Commit();
+            }
+
+            TaskDialog.Show("Success", $"ระบบสแกนและทำการเปลี่ยนรหัสชื่อเสาเรียงลำดับใหม่สำเร็จ {sortedColumns.Count} ต้น!");
+            return Result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            TaskDialog.Show("Error", $"ระบบจัดลำดับรหัสเสาล้มเหลว: {ex.Message}");
+            return Result.Failed;
+        }
+    }
+}
+```
+
+

@@ -26,6 +26,7 @@ export default defineConfig({
 					items: [
 						{ label: 'เตรียมเครื่อง', slug: 'setup/prerequisites' },
 						{ label: 'ตั้งค่าโปรเจ็กต์', slug: 'setup/project-setup' },
+						{ label: 'เครื่องมือคู่ใจนักพัฒนา', slug: 'setup/developer-tools' },
 					],
 				},
 				{
