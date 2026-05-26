@@ -40,7 +40,7 @@ public class App : IExternalApplication
 
             // 3. เตรียมข้อมูลของปุ่ม (ระบุชื่อปุ่ม และเส้นทางที่ชี้ไปยัง Command ที่ต้องการให้รันเมื่อกด)
             string thisAssemblyPath = Assembly.GetExecutingAssembly().Location;
-            string assemblyFolder = Path.GetDirectoryName(thisAssemblyPath);
+            string assemblyFolder = Path.GetDirectoryName(thisAssemblyPath) ?? string.Empty;
 
             PushButtonData buttonData = new PushButtonData(
                 name: "cmdHelloWorld",
